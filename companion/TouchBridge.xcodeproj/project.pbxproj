@@ -1,0 +1,383 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1329B644C212BF2C905B6360 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 183DE1B2B9D1033CDB0D5D62 /* Assets.xcassets */; };
+		15C8125204A2A91DE2678048 /* BLEClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57F8EC6ED6D1C5C82C7EE8C2 /* BLEClient.swift */; };
+		2FC95543131B7D3CB16F3FC9 /* CompanionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3C78F55E6DB1F2960C6F5D6 /* CompanionCoordinator.swift */; };
+		78EED9834B7293BBAF01AB73 /* TouchBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10D23347E7F7DDFA68230A6 /* TouchBridgeApp.swift */; };
+		81E361448AE77E0BD9A407A7 /* DeviceListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B1E51838209923CAE0060DC /* DeviceListView.swift */; };
+		85E69B310C73955C2C7A3A5A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7BD5D1261EF551FC2505CB4 /* SettingsView.swift */; };
+		865852FB614DD94A6875806C /* SecureEnclaveManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45BF0771F4FB688424747282 /* SecureEnclaveManager.swift */; };
+		9DEDBC4447FD5E3F7C72B7A0 /* LocalAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1553A06E3D55CF83CA48BA48 /* LocalAuthManager.swift */; };
+		A2BB382A6E09AC1CA24251E5 /* WiFiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32E96D6C2B1F1B037D51E2A5 /* WiFiClient.swift */; };
+		A2E048B779E1A84C0038A298 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF1AF5AFE6DCEF27B3FC7572 /* AppDelegate.swift */; };
+		A4E7FBFCFC68696089CC8B53 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FC4D4AB600B34E8D3CFBD05 /* PairingView.swift */; };
+		AD77F1F592222C890CD4B0B4 /* TransportClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D998A8660466582AAA77B4CC /* TransportClient.swift */; };
+		C52C7FE36B11B997D57E2103 /* ChallengeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C3C872D829826A04C8AD57 /* ChallengeHandler.swift */; };
+		D59FBAF1B6DA5E929732C089 /* AuthRequestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CF4ACA76B505F210DD6D213 /* AuthRequestView.swift */; };
+		DC81EAEC0EC9E1DCD0E996F0 /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 119CCA65FD28352C92A20EDE /* Constants.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0FC4D4AB600B34E8D3CFBD05 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		119CCA65FD28352C92A20EDE /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
+		1553A06E3D55CF83CA48BA48 /* LocalAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAuthManager.swift; sourceTree = "<group>"; };
+		183DE1B2B9D1033CDB0D5D62 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		32E96D6C2B1F1B037D51E2A5 /* WiFiClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WiFiClient.swift; sourceTree = "<group>"; };
+		45BF0771F4FB688424747282 /* SecureEnclaveManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureEnclaveManager.swift; sourceTree = "<group>"; };
+		57F8EC6ED6D1C5C82C7EE8C2 /* BLEClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEClient.swift; sourceTree = "<group>"; };
+		6B1E51838209923CAE0060DC /* DeviceListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceListView.swift; sourceTree = "<group>"; };
+		9CF4ACA76B505F210DD6D213 /* AuthRequestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthRequestView.swift; sourceTree = "<group>"; };
+		A848C3A76FA8D8271E2A8BFA /* TouchBridge.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TouchBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D998A8660466582AAA77B4CC /* TransportClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportClient.swift; sourceTree = "<group>"; };
+		DF1AF5AFE6DCEF27B3FC7572 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		E23D8233AA24B7334427A0ED /* TouchBridge.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TouchBridge.entitlements; sourceTree = "<group>"; };
+		E5C3C872D829826A04C8AD57 /* ChallengeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChallengeHandler.swift; sourceTree = "<group>"; };
+		E7BD5D1261EF551FC2505CB4 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		F10D23347E7F7DDFA68230A6 /* TouchBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchBridgeApp.swift; sourceTree = "<group>"; };
+		F3C78F55E6DB1F2960C6F5D6 /* CompanionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionCoordinator.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		33E728E96607DF1F4623CD73 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				DF1AF5AFE6DCEF27B3FC7572 /* AppDelegate.swift */,
+				F10D23347E7F7DDFA68230A6 /* TouchBridgeApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		569D106B4A467A7FBC6AA7BC /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A848C3A76FA8D8271E2A8BFA /* TouchBridge.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B226B79708B388077D90BB20 = {
+			isa = PBXGroup;
+			children = (
+				CB764DA027D055FB16A83EDD /* TouchBridge */,
+				569D106B4A467A7FBC6AA7BC /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		CB764DA027D055FB16A83EDD /* TouchBridge */ = {
+			isa = PBXGroup;
+			children = (
+				183DE1B2B9D1033CDB0D5D62 /* Assets.xcassets */,
+				E23D8233AA24B7334427A0ED /* TouchBridge.entitlements */,
+				33E728E96607DF1F4623CD73 /* App */,
+				FA2589AC27C3A789AB48EE5B /* Core */,
+				E2411C2C2A1C2EF186324796 /* Views */,
+			);
+			path = TouchBridge;
+			sourceTree = "<group>";
+		};
+		E2411C2C2A1C2EF186324796 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				9CF4ACA76B505F210DD6D213 /* AuthRequestView.swift */,
+				6B1E51838209923CAE0060DC /* DeviceListView.swift */,
+				0FC4D4AB600B34E8D3CFBD05 /* PairingView.swift */,
+				E7BD5D1261EF551FC2505CB4 /* SettingsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		FA2589AC27C3A789AB48EE5B /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				57F8EC6ED6D1C5C82C7EE8C2 /* BLEClient.swift */,
+				E5C3C872D829826A04C8AD57 /* ChallengeHandler.swift */,
+				F3C78F55E6DB1F2960C6F5D6 /* CompanionCoordinator.swift */,
+				119CCA65FD28352C92A20EDE /* Constants.swift */,
+				1553A06E3D55CF83CA48BA48 /* LocalAuthManager.swift */,
+				45BF0771F4FB688424747282 /* SecureEnclaveManager.swift */,
+				D998A8660466582AAA77B4CC /* TransportClient.swift */,
+				32E96D6C2B1F1B037D51E2A5 /* WiFiClient.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1AEE967F05B298AE8B3483EA /* TouchBridge */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8B3CD5146BE15FFFAF32043B /* Build configuration list for PBXNativeTarget "TouchBridge" */;
+			buildPhases = (
+				47FB89CB2FCFFD7B5F91276C /* Sources */,
+				36A9616CE3C26C0011BF4C7C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TouchBridge;
+			packageProductDependencies = (
+			);
+			productName = TouchBridge;
+			productReference = A848C3A76FA8D8271E2A8BFA /* TouchBridge.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		FB87B76DB7C57BEB964CF74C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 4021C59334F8D2E953522229 /* Build configuration list for PBXProject "TouchBridge" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = B226B79708B388077D90BB20;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 569D106B4A467A7FBC6AA7BC /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1AEE967F05B298AE8B3483EA /* TouchBridge */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		36A9616CE3C26C0011BF4C7C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1329B644C212BF2C905B6360 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		47FB89CB2FCFFD7B5F91276C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A2E048B779E1A84C0038A298 /* AppDelegate.swift in Sources */,
+				D59FBAF1B6DA5E929732C089 /* AuthRequestView.swift in Sources */,
+				15C8125204A2A91DE2678048 /* BLEClient.swift in Sources */,
+				C52C7FE36B11B997D57E2103 /* ChallengeHandler.swift in Sources */,
+				2FC95543131B7D3CB16F3FC9 /* CompanionCoordinator.swift in Sources */,
+				DC81EAEC0EC9E1DCD0E996F0 /* Constants.swift in Sources */,
+				81E361448AE77E0BD9A407A7 /* DeviceListView.swift in Sources */,
+				9DEDBC4447FD5E3F7C72B7A0 /* LocalAuthManager.swift in Sources */,
+				A4E7FBFCFC68696089CC8B53 /* PairingView.swift in Sources */,
+				865852FB614DD94A6875806C /* SecureEnclaveManager.swift in Sources */,
+				85E69B310C73955C2C7A3A5A /* SettingsView.swift in Sources */,
+				78EED9834B7293BBAF01AB73 /* TouchBridgeApp.swift in Sources */,
+				AD77F1F592222C890CD4B0B4 /* TransportClient.swift in Sources */,
+				A2BB382A6E09AC1CA24251E5 /* WiFiClient.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1E7F7B91D0F858D084DB192C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = TouchBridge/TouchBridge.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				INFOPLIST_FILE = TouchBridge/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.touchbridge.companion;
+				SDKROOT = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		20FBAD43F2E455ABF757233A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = TouchBridge/TouchBridge.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				INFOPLIST_FILE = TouchBridge/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.touchbridge.companion;
+				SDKROOT = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		760416F49E389EE54D07786A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		A2A24324C8FCFC8B48359C71 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4021C59334F8D2E953522229 /* Build configuration list for PBXProject "TouchBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A2A24324C8FCFC8B48359C71 /* Debug */,
+				760416F49E389EE54D07786A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8B3CD5146BE15FFFAF32043B /* Build configuration list for PBXNativeTarget "TouchBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				20FBAD43F2E455ABF757233A /* Debug */,
+				1E7F7B91D0F858D084DB192C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = FB87B76DB7C57BEB964CF74C /* Project object */;
+}

@@ -1,0 +1,22 @@
+{
+  "name": "touchbridge-video",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "preview": "remotion preview src/index.js",
+    "render": "remotion render src/index.js TouchBridge out/touchbridge.mp4",
+    "still": "remotion still src/index.js TouchBridge out/thumbnail.png --frame=160"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@remotion/cli": "^4.0.441",
+    "@remotion/player": "^4.0.441",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "remotion": "^4.0.441"
+  }
+}

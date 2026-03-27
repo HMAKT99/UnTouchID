@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  daemon-tests:
+    name: Daemon Tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build daemon
+        run: cd daemon && swift build
+
+      - name: Run tests
+        run: cd daemon && swift test
+
+      - name: Build PAM module
+        run: make -C pam
+
+      - name: Verify PAM binary
+        run: file pam/pam_touchbridge.so
+
+  protocol-tests:
+    name: Protocol Tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build protocol
+        run: cd protocol && swift build
+
+      - name: Run tests
+        run: cd protocol && swift test
+
+  ios-build:
+    name: iOS Build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: cd companion && xcodegen generate
+
+      - name: Build for simulator
+        run: |
+          cd companion
+          xcodebuild -project TouchBridge.xcodeproj \
+            -scheme TouchBridge \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            build

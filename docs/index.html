@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TouchBridge — Use your phone's fingerprint on any Mac</title>
+    <meta name="description" content="Free, open-source alternative to Apple's $199 Touch ID keyboard. Use your phone's fingerprint to authenticate sudo, screensaver, and more on any Mac.">
+    <meta property="og:title" content="TouchBridge — Phone fingerprint for any Mac">
+    <meta property="og:description" content="sudo, screensaver, App Store — no $199 Magic Keyboard required. Works with iPhone, Android, or any browser.">
+    <meta property="og:image" content="https://raw.githubusercontent.com/HMAKT99/UnTouchID/main/assets/social-preview.png">
+    <meta property="og:url" content="https://hmakt99.github.io/UnTouchID/">
+    <meta name="twitter:card" content="summary_large_image">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+            background: #0a0a1a; color: #fff;
+            min-height: 100vh;
+        }
+        .hero {
+            text-align: center;
+            padding: 80px 20px 60px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .logo { font-size: 80px; margin-bottom: 20px; }
+        h1 { font-size: 48px; font-weight: 800; letter-spacing: -1px; margin-bottom: 16px; }
+        .subtitle { font-size: 22px; color: #30d158; margin-bottom: 8px; }
+        .tagline { font-size: 18px; color: #888; margin-bottom: 40px; }
+        .demo {
+            background: #1a1a2e; border-radius: 16px; padding: 28px 40px;
+            font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+            font-size: 18px; text-align: left; display: inline-block;
+            margin-bottom: 40px; min-width: 500px;
+        }
+        .demo .prompt { color: #30d158; }
+        .demo .output { color: #ff9f0a; }
+        .demo .success { color: #30d158; font-weight: bold; }
+        .demo div { margin: 6px 0; }
+        .cta {
+            display: inline-block; background: #2b70fb; color: #fff;
+            padding: 16px 40px; border-radius: 12px; font-size: 18px;
+            font-weight: 600; text-decoration: none; margin: 8px;
+            transition: transform 0.1s;
+        }
+        .cta:hover { transform: scale(1.03); }
+        .cta.secondary { background: #1a1a2e; }
+        .devices {
+            display: flex; justify-content: center; gap: 32px;
+            flex-wrap: wrap; padding: 60px 20px;
+            max-width: 900px; margin: 0 auto;
+        }
+        .device {
+            background: #1a1a2e; border-radius: 16px; padding: 24px;
+            width: 140px; text-align: center;
+        }
+        .device .icon { font-size: 40px; margin-bottom: 8px; }
+        .device .name { font-size: 14px; font-weight: 600; }
+        .device .detail { font-size: 12px; color: #888; }
+        .compare {
+            max-width: 800px; margin: 0 auto; padding: 60px 20px;
+        }
+        .compare h2 { text-align: center; font-size: 32px; margin-bottom: 30px; }
+        table {
+            width: 100%; border-collapse: collapse;
+            font-size: 16px;
+        }
+        th { text-align: left; padding: 12px; color: #888; border-bottom: 2px solid #333; }
+        td { padding: 12px; border-bottom: 1px solid #1a1a2e; }
+        .yes { color: #30d158; font-weight: 600; }
+        .no { color: #666; }
+        .price { color: #ff453a; font-weight: 600; }
+        .free { color: #30d158; font-weight: 700; font-size: 18px; }
+        footer {
+            text-align: center; padding: 60px 20px;
+            color: #444; font-size: 14px;
+        }
+        footer a { color: #2b70fb; text-decoration: none; }
+        @media (max-width: 600px) {
+            h1 { font-size: 32px; }
+            .demo { min-width: auto; font-size: 14px; padding: 20px; }
+            .devices { gap: 16px; }
+            .device { width: 100px; padding: 16px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="hero">
+        <div class="logo">🔐</div>
+        <h1>TouchBridge</h1>
+        <div class="subtitle">Use your phone's fingerprint to authenticate on any Mac.</div>
+        <div class="tagline">sudo, screensaver, App Store — no $199 Magic Keyboard required.</div>
+
+        <div class="demo">
+            <div><span class="prompt">$</span> sudo echo hello</div>
+            <div class="output">→ Phone buzzes → Touch fingerprint</div>
+            <div class="success">✓ Authenticated</div>
+        </div>
+
+        <div>
+            <a href="https://github.com/HMAKT99/UnTouchID#try-it-in-60-seconds" class="cta">Try it in 60 seconds</a>
+            <a href="https://github.com/HMAKT99/UnTouchID" class="cta secondary">View on GitHub</a>
+        </div>
+    </div>
+
+    <div class="devices">
+        <div class="device"><div class="icon">📱</div><div class="name">iPhone</div><div class="detail">Face ID</div></div>
+        <div class="device"><div class="icon">🤖</div><div class="name">Android</div><div class="detail">Fingerprint</div></div>
+        <div class="device"><div class="icon">⌚</div><div class="name">Apple Watch</div><div class="detail">Tap</div></div>
+        <div class="device"><div class="icon">⌚</div><div class="name">Wear OS</div><div class="detail">Tap</div></div>
+        <div class="device"><div class="icon">🌐</div><div class="name">Any Browser</div><div class="detail">No app needed</div></div>
+    </div>
+
+    <div class="compare">
+        <h2>vs. Alternatives</h2>
+        <table>
+            <tr><th></th><th>TouchBridge</th><th>Magic Keyboard</th><th>Apple Watch</th></tr>
+            <tr><td>Price</td><td class="free">Free</td><td class="price">$199</td><td class="price">$249+</td></tr>
+            <tr><td>sudo</td><td class="yes">✅</td><td class="yes">✅</td><td class="no">❌</td></tr>
+            <tr><td>Screensaver</td><td class="yes">✅</td><td class="yes">✅</td><td class="no">Sleep only</td></tr>
+            <tr><td>Wireless</td><td class="yes">✅ BLE</td><td class="no">❌ Wired</td><td class="yes">✅</td></tr>
+            <tr><td>Android</td><td class="yes">✅</td><td class="no">❌</td><td class="no">❌</td></tr>
+            <tr><td>Open Source</td><td class="yes">✅</td><td class="no">❌</td><td class="no">❌</td></tr>
+        </table>
+    </div>
+
+    <footer>
+        <p>Free · Open Source · MIT License · 91 Tests</p>
+        <p style="margin-top: 12px;">
+            <a href="https://github.com/HMAKT99/UnTouchID">GitHub</a> ·
+            <a href="https://github.com/HMAKT99/UnTouchID/blob/main/SECURITY.md">Security</a> ·
+            <a href="https://github.com/HMAKT99/UnTouchID/blob/main/docs/setup.md">Install Guide</a>
+        </p>
+    </footer>
+</body>
+</html>
