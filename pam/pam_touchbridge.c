@@ -30,6 +30,32 @@
 #include <errno.h>
 #include <syslog.h>
 
+/*
+ * Send an info message to the user's terminal via PAM conversation.
+ * This is how PAM modules display "Check your phone..." type messages.
+ */
+static void pam_notify(pam_handle_t *pamh, const char *msg)
+{
+    const struct pam_conv *conv = NULL;
+    struct pam_message pmsg;
+    const struct pam_message *pmsgp = &pmsg;
+    struct pam_response *resp = NULL;
+
+    if (pam_get_item(pamh, PAM_CONV, (const void **)&conv) != PAM_SUCCESS
+        || conv == NULL || conv->conv == NULL) {
+        return;
+    }
+
+    pmsg.msg_style = PAM_TEXT_INFO;
+    pmsg.msg = (char *)msg;
+
+    conv->conv(1, &pmsgp, &resp, conv->appdata_ptr);
+
+    if (resp != NULL) {
+        free(resp);
+    }
+}
+
 /* Maximum sizes */
 #define MAX_SOCK_PATH  256
 #define MAX_REQUEST    512
@@ -167,8 +193,11 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv)
     /* Connect to daemon */
     fd = connect_to_daemon(sock_path, timeout_sec);
     if (fd < 0) {
+        pam_notify(pamh, "TouchBridge: daemon not running — falling through to password");
         goto cleanup;
     }
+
+    pam_notify(pamh, "TouchBridge: check your phone or watch...");
 
     /* Build JSON request — simple snprintf, no JSON library needed */
     bytes = snprintf(request, sizeof(request),
@@ -194,9 +223,11 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv)
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             syslog(LOG_AUTH | LOG_WARNING,
                 "pam_touchbridge: timeout waiting for companion device");
+            pam_notify(pamh, "TouchBridge: timed out — no response from phone");
         } else {
             syslog(LOG_AUTH | LOG_ERR,
                 "pam_touchbridge: recv failed: %s", strerror(errno));
+            pam_notify(pamh, "TouchBridge: connection error");
         }
         goto cleanup;
     }
@@ -207,10 +238,12 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv)
     if (strstr(response, "\"result\":\"success\"") != NULL) {
         syslog(LOG_AUTH | LOG_INFO,
             "pam_touchbridge: authentication succeeded for user=%s", user);
+        pam_notify(pamh, "TouchBridge: ✓ authenticated");
         ret = PAM_SUCCESS;
     } else {
         syslog(LOG_AUTH | LOG_INFO,
             "pam_touchbridge: authentication failed for user=%s", user);
+        pam_notify(pamh, "TouchBridge: ✗ denied — falling through to password");
         ret = PAM_AUTH_ERR;
     }
 
