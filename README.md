@@ -177,6 +177,28 @@ Challenges relay from Android phone → Watch → tap Approve
 
 ---
 
+## How is this different from Passkeys?
+
+Apple's built-in Passkeys already use Face ID on your iPhone to log into websites. So why TouchBridge?
+
+**Passkeys replace your website passwords. TouchBridge replaces your Mac password.**
+
+| | Apple Passkeys (built-in) | TouchBridge |
+|---|---|---|
+| **What it does** | Log into websites (Gmail, GitHub, etc.) | Authenticate on macOS (sudo, screensaver, App Store) |
+| **Where it works** | Safari/Chrome — websites that support Passkeys | Terminal, lock screen, system dialogs, any `sudo` command |
+| **Can it do `sudo`?** | ❌ No | ✅ Yes |
+| **Can it unlock screensaver?** | ❌ No | ✅ Yes |
+| **Can it do App Store?** | ❌ No | ✅ Yes |
+| **Can it do website login?** | ✅ Yes | Passkeys only (via browser extension) |
+| **How it connects** | Scan QR code each time | Auto-connects via BLE (pair once) |
+| **Android support** | ❌ No | ✅ Yes |
+| **Works offline** | ❌ Needs website | ✅ Local BLE |
+
+They're complementary — you'd use both. Passkeys for the web. TouchBridge for your Mac.
+
+---
+
 ## Compared to Alternatives
 
 | | TouchBridge | Magic Keyboard | Apple Watch | YubiKey Bio | Duo Security |
