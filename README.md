@@ -23,11 +23,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/HMAKT99/UnTouchID/releases/tag/v0.1.0-alpha">
-    <img src="assets/touchbridge-preview.gif" alt="TouchBridge Demo" width="700">
-  </a>
-  <br>
-  <sub><a href="https://github.com/HMAKT99/UnTouchID/releases/tag/v0.1.0-alpha">▶ Watch full video (30s)</a></sub>
+  <video src="https://github.com/user-attachments/assets/65ea3c2f-7bf9-4272-b475-f8a387de3c7b" width="700" autoplay loop muted playsinline></video>
 </p>
 
 ---
