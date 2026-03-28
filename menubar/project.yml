@@ -1,0 +1,31 @@
+name: TouchBridgeMenu
+options:
+  bundleIdPrefix: dev.touchbridge
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "15.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  TouchBridgeMenu:
+    type: application
+    platform: macOS
+    sources:
+      - path: TouchBridgeMenu
+    info:
+      path: TouchBridgeMenu/Info.plist
+      properties:
+        CFBundleDisplayName: TouchBridge
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSUIElement: true
+        NSBluetoothAlwaysUsageDescription: "TouchBridge needs Bluetooth to communicate with your phone."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.touchbridge.menubar
+        CODE_SIGN_IDENTITY: "-"

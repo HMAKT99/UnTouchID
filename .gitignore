@@ -37,3 +37,6 @@ pam/*.so
 credentials.json
 video/touchbridge-video/node_modules/
 video/touchbridge-video/out/
+installer/build/
+installer/release/
+menubar/TouchBridgeMenu.xcodeproj/
