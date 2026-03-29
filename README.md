@@ -88,36 +88,41 @@ sudo echo 'It works!'
 | **Any phone/laptop** | Open URL → Tap Approve | One-time token | **No — just a browser** |
 | **No device** | Simulator → Auto-approve | Software keys | **No** |
 
+> **Security note:** BLE modes (iPhone, Android, Watch) use **encrypted Bluetooth** with ECDH session keys and AES-256-GCM — no Wi-Fi or network involved. The web companion uses HTTP on your local network and is meant for **testing and convenience only** — not recommended for public/untrusted networks.
+
 ### Use with your phone
 
-**Option A — Any phone, no app install:**
-```bash
-touchbridged serve --web
-sudo echo test
-# → Terminal shows a URL → open on any phone → tap Approve
-```
-
-**Option B — iPhone (Face ID):**
+**Option A — iPhone (Face ID) — recommended for security:**
 ```
 Open companion/TouchBridge.xcodeproj in Xcode → Build → Run on iPhone → Pair
 ```
+Uses encrypted BLE + Secure Enclave signing. No network involved.
 
-**Option C — Android (Fingerprint):**
+**Option B — Android (Fingerprint):**
 ```
 Open companion-android/ in Android Studio → Build → Install → Pair
 ```
+Uses encrypted BLE + Keystore (StrongBox/TEE) signing. No network involved.
 
-**Option D — Apple Watch (Tap):**
+**Option C — Apple Watch (Tap):**
 ```
 Build the watchOS target from companion/TouchBridge.xcodeproj
 Challenges relay from iPhone → Watch → tap Approve
 ```
 
-**Option E — Wear OS (Tap):**
+**Option D — Wear OS (Tap):**
 ```
 Open companion-android/wear/ in Android Studio → Build → Install on watch
 Challenges relay from Android phone → Watch → tap Approve
 ```
+
+**Option E — Any phone, no app install (convenience/testing only):**
+```bash
+touchbridged serve --web
+sudo echo test
+# → Terminal shows a URL → open on any phone → tap Approve
+```
+⚠️ Uses HTTP on local network. For testing and trusted networks only — not recommended for public Wi-Fi.
 
 ---
 
