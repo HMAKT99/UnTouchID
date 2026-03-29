@@ -55,8 +55,16 @@ $ sudo echo hello
 
 No phone needed. Test the full `sudo` flow right now:
 
+### Install with Homebrew (recommended)
+
 ```bash
-# Clone and build
+brew tap HMAKT99/touchbridge
+brew install --cask touchbridge
+```
+
+### Or build from source
+
+```bash
 git clone https://github.com/HMAKT99/UnTouchID.git
 cd UnTouchID
 cd daemon && swift build -c release && cd ..
@@ -64,13 +72,17 @@ make -C pam
 sudo bash scripts/install.sh
 ```
 
+### Try it
+
 ```bash
 # Terminal 1 — start daemon in simulator mode
 touchbridged serve --simulator
 
 # Terminal 2 — test sudo
 sudo echo 'It works!'
-# → No password. Authenticated via TouchBridge.
+# → TouchBridge: check your phone or watch...
+# → TouchBridge: ✓ authenticated
+# → It works!
 ```
 
 **That's it.** Undo anytime with `sudo bash scripts/uninstall.sh`.
