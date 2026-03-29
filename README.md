@@ -57,6 +57,10 @@ No phone needed. Test the full `sudo` flow right now:
 
 ### Install with Homebrew (recommended)
 
+<p align="center">
+  <img src="assets/screenshots/homebrew-install.png" alt="Homebrew Install" width="600">
+</p>
+
 ```bash
 brew tap HMAKT99/touchbridge
 brew install --cask touchbridge
@@ -73,6 +77,10 @@ sudo bash scripts/install.sh
 ```
 
 ### Try it
+
+<p align="center">
+  <img src="assets/screenshots/sudo-auth.png" alt="sudo with TouchBridge" width="600">
+</p>
 
 ```bash
 # Terminal 1 — start daemon in simulator mode
@@ -129,6 +137,11 @@ Challenges relay from Android phone → Watch → tap Approve
 ```
 
 **Option E — Any phone, no app install (convenience/testing only):**
+
+<p align="center">
+  <img src="assets/screenshots/web-companion.png" alt="Web Companion" width="600">
+</p>
+
 ```bash
 touchbridged serve --web
 sudo echo test
@@ -246,7 +259,11 @@ Flags can be combined: `touchbridged serve --web --auto-lock`
 
 ---
 
-## Configuration
+## Configuration & Audit Log
+
+<p align="center">
+  <img src="assets/screenshots/logs-summary.png" alt="Auth Summary Dashboard" width="600">
+</p>
 
 ```bash
 touchbridge-test config show                          # view policy
@@ -254,8 +271,9 @@ touchbridge-test config set --surface sudo --mode biometric_required
 touchbridge-test config set --surface screensaver --mode proximity_session --ttl 30
 touchbridge-test config reset                         # restore defaults
 touchbridge-test logs                                 # recent auth events
-touchbridge-test logs --surface pam_sudo --count 50   # filtered
-touchbridge-test logs --json                          # raw NDJSON
+touchbridge-test logs --summary                       # analytics dashboard
+touchbridge-test logs --failures                      # failed attempts only
+touchbridge-test logs --export csv                    # export for security review
 ```
 
 ---
