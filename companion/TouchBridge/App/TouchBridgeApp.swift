@@ -24,6 +24,12 @@ class AppState: ObservableObject {
     @Published var statusMessage: String = "Not connected"
     @Published var challengeCount: Int = 0
     @Published var pendingChallenge: PendingChallenge?
+    /// Set when the Secure Enclave signing key is invalidated due to a biometric enrollment change.
+    /// Cleared when the user re-pairs or dismisses.
+    @Published var keyInvalidated: Bool = false
+    /// Set when the user explicitly cancelled or denied a Face ID / biometric prompt.
+    /// Keeps the auth sheet open so the user sees feedback instead of a silent dismiss.
+    @Published var challengeDenied: Bool = false
 
     let coordinator: CompanionCoordinator
 
@@ -58,17 +64,28 @@ class AppState: ObservableObject {
             }
         }
 
-        coordinator.onChallengeResult = { [weak self] challengeID, success in
+        coordinator.onChallengeResult = { [weak self] challengeID, success, error in
             DispatchQueue.main.async {
                 self?.challengeCount += 1
-                self?.pendingChallenge = nil
-                self?.lastChallenge = success
-                    ? "Approved (\(challengeID.prefix(8))...)"
-                    : "Denied"
 
-                // Haptic feedback
-                let generator = UINotificationFeedbackGenerator()
-                generator.notificationOccurred(success ? .success : .error)
+                if case .keyInvalidated = error {
+                    self?.pendingChallenge = nil
+                    self?.keyInvalidated = true
+                    self?.lastChallenge = "Key invalidated — re-pair required"
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                } else if case .biometricDenied = error {
+                    // Keep the sheet open so the user sees the denial — they dismissed Face ID
+                    // and would otherwise just see sudo silently ask for a password with no explanation.
+                    self?.challengeDenied = true
+                    self?.lastChallenge = "Denied"
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                } else {
+                    self?.pendingChallenge = nil
+                    self?.lastChallenge = success
+                        ? "Approved (\(challengeID.prefix(8))...)"
+                        : "Denied"
+                    UINotificationFeedbackGenerator().notificationOccurred(success ? .success : .error)
+                }
             }
         }
 
@@ -94,6 +111,8 @@ class AppState: ObservableObject {
         statusMessage = "Not connected"
         challengeCount = 0
         lastChallenge = nil
+        keyInvalidated = false
+        challengeDenied = false
     }
 }
 
@@ -233,6 +252,31 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
+                // Key-invalidated banner
+                if appState.keyInvalidated {
+                    HStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.yellow)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Re-pair required")
+                                .font(.subheadline.bold())
+                            Text("Your Face ID / Touch ID enrollment changed. Open Settings to re-pair.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(12)
+                    .background(Color.yellow.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.yellow.opacity(0.4), lineWidth: 1)
+                    )
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                }
+
                 // Status card
                 VStack(spacing: 16) {
                     ZStack {
@@ -305,8 +349,13 @@ struct HomeView: View {
             AuthRequestView(
                 reason: challenge.reason,
                 macName: challenge.macName,
+                keyInvalidated: appState.keyInvalidated,
+                wasDenied: appState.challengeDenied,
                 onApprove: { appState.pendingChallenge = nil },
-                onDeny: { appState.pendingChallenge = nil }
+                onDeny: {
+                    appState.challengeDenied = false
+                    appState.pendingChallenge = nil
+                }
             )
             .interactiveDismissDisabled()
         }
