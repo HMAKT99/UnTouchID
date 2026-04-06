@@ -121,8 +121,9 @@ struct Serve: ParsableCommand {
     private func runNormalMode() throws {
         print("touchbridged v1.0.0 starting...")
 
+        let config = DaemonConfig.load()
         let policyEngine = PolicyEngine()
-        let coordinator = DaemonCoordinator(rssiThreshold: rssiThreshold)
+        let coordinator = DaemonCoordinator(rssiThreshold: rssiThreshold, serviceUUID: config.serviceUUID)
 
         // Proximity auto-lock
         var proximityMonitor: ProximityMonitor?

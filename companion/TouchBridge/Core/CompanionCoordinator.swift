@@ -149,8 +149,42 @@ public final class CompanionCoordinator: NSObject, @unchecked Sendable {
             challengeHandler.sessionCrypto = crypto
 
             logger.info("ECDH session established with Mac")
+
+            // Immediately identify ourselves to the daemon.
+            // This allows the Mac to recognise us as a previously-paired device
+            // without going through the full pairing ceremony again.
+            sendIdentify(using: crypto)
         } catch {
             logger.error("ECDH failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Send an encrypted identify message to the Mac after ECDH.
+    ///
+    /// Wire format: [version=1][type=6(identify)] + AES-GCM encrypted JSON
+    /// The Mac decrypts it, looks up deviceID in the keychain, and marks
+    /// this session as identified so it can receive challenges.
+    private func sendIdentify(using crypto: SessionCryptoWrapper) {
+        struct IdentifyPayload: Codable {
+            let deviceID: String
+            let deviceName: String
+        }
+
+        do {
+            let payload = IdentifyPayload(
+                deviceID: deviceID,
+                deviceName: UIDevice.current.name
+            )
+            let plaintext = try JSONEncoder().encode(payload)
+            let encrypted = try crypto.encrypt(plaintext: plaintext)
+
+            var wireData = Data([1, 6]) // version=1, type=identify(6)
+            wireData.append(encrypted)
+
+            _ = bleClient.sendPairingData(wireData)
+            logger.info("Sent identify for device \(self.deviceID)")
+        } catch {
+            logger.error("Failed to send identify: \(error.localizedDescription)")
         }
     }
 
@@ -242,6 +276,11 @@ extension CompanionCoordinator: BLEClientDelegate {
 
             // Store pairing info
             UserDefaults.standard.set(macID, forKey: "pairedMacID")
+
+            // Lock future BLE scans to this Mac's unique service UUID.
+            // Without this, the app would scan for the generic protocol UUID
+            // and connect to any TouchBridge Mac nearby (other people's Macs).
+            bleClient.serviceUUID = macID
 
             DispatchQueue.main.async {
                 self.onPairingComplete?(macID)

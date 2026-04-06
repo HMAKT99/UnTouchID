@@ -42,14 +42,15 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
         auditLog: AuditLog = AuditLog(),
         challengeManager: ChallengeManager = ChallengeManager(),
         pairingManager: PairingManager? = nil,
-        rssiThreshold: Int = TouchBridgeConstants.defaultRSSIThreshold
+        rssiThreshold: Int = TouchBridgeConstants.defaultRSSIThreshold,
+        serviceUUID: String = TouchBridgeConstants.serviceUUID
     ) {
         self.keychainStore = keychainStore
         self.auditLog = auditLog
         self.challengeManager = challengeManager
-        self.bleServer = BLEServer(rssiThreshold: rssiThreshold)
+        self.bleServer = BLEServer(rssiThreshold: rssiThreshold, serviceUUID: serviceUUID)
 
-        let pm = pairingManager ?? PairingManager(keychainStore: keychainStore)
+        let pm = pairingManager ?? PairingManager(keychainStore: keychainStore, serviceUUID: serviceUUID)
         self.pairingManager = pm
 
         super.init()
@@ -126,18 +127,24 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
         }
     }
 
-    /// Authenticate a PAM request by issuing a challenge to a connected companion.
+    /// Authenticate a PAM request by issuing challenges to all identified companion devices.
     ///
     /// Called by `SocketServer` when a PAM module connects.
-    /// Blocks (async) until the companion responds or the timeout expires.
+    /// Broadcasts to every connected, paired device simultaneously.
+    /// The first valid response wins — other challenges expire naturally.
+    /// Blocks until a response arrives or the timeout expires.
     public func authenticateFromPAM(
         user: String,
         service: String,
         pid: Int,
         timeout: TimeInterval
     ) async -> (success: Bool, reason: String?) {
-        guard let centralID = readyCentrals.first else {
-            logger.warning("PAM auth: no companion connected")
+        // Only challenge sessions that have completed ECDH AND identified as a known paired device.
+        // Unknown/anonymous centrals (e.g. stranger's phone that happens to be nearby) are excluded.
+        let targets = readyCentrals.filter { sessions[$0]?.deviceID != nil }
+
+        guard !targets.isEmpty else {
+            logger.warning("PAM auth: no identified companion connected (ready=\(self.readyCentrals.count))")
             await auditLog.log(AuditEntry(
                 sessionID: UUID().uuidString,
                 surface: "pam_\(service)",
@@ -148,28 +155,37 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
             return (false, "no_companion_connected")
         }
 
-        // Issue challenge and await result with timeout
+        logger.info("PAM auth: broadcasting challenge to \(targets.count) device(s)")
+
+        // Issue challenges to all identified devices and race for the first valid response.
+        // Each challengeID maps to the same continuation — first response wins, subsequent
+        // responses find their entry already removed from pendingAuthentications (no-op).
         let result: ChallengeResult? = await withTaskGroup(of: ChallengeResult?.self) { group in
             group.addTask {
-                // Issue challenge and wait for BLE response
                 await withCheckedContinuation { (continuation: CheckedContinuation<ChallengeResult, Never>) in
                     Task {
-                        guard let challengeID = await self.issueChallenge(to: centralID, reason: service) else {
-                            continuation.resume(returning: .unknownChallenge)
-                            return
+                        var issued = 0
+                        for centralID in targets {
+                            if let challengeID = await self.issueChallenge(to: centralID, reason: service) {
+                                self.pendingAuthentications[challengeID] = continuation
+                                issued += 1
+                            }
                         }
-                        self.pendingAuthentications[challengeID] = continuation
+                        // If every issueChallenge call failed (BLE queue full, etc.) fail immediately.
+                        if issued == 0 {
+                            continuation.resume(returning: .unknownChallenge)
+                        }
+                        // Otherwise: wait — the first device response resumes the continuation.
                     }
                 }
             }
 
             group.addTask {
-                // Timeout
+                // Global timeout covers the entire broadcast, not per-device.
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 return nil
             }
 
-            // Return whichever finishes first
             let first = await group.next() ?? nil
             group.cancelAll()
             return first
@@ -369,5 +385,46 @@ extension DaemonCoordinator: BLEServerDelegate {
                 logger.error("Response processing failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    // MARK: - Identify
+
+    /// Handle an encrypted identify message from a reconnecting companion.
+    ///
+    /// A previously-paired device sends this after ECDH to tell the daemon its deviceID
+    /// without going through a full pairing ceremony. The daemon looks up the deviceID in
+    /// the keychain and, if found, marks the session as identified so it can receive challenges.
+    private func handleIdentify(data: Data, from centralID: UUID) async throws {
+        guard let session = sessions[centralID],
+              let crypto = session.sessionCrypto else {
+            logger.warning("Identify from \(centralID): no session crypto — ignoring")
+            return
+        }
+
+        // Strip the 2-byte wire header, then decrypt.
+        let encryptedPayload = data.dropFirst(2)
+        let plaintext = try crypto.decrypt(ciphertext: Data(encryptedPayload))
+
+        // The payload is a JSON object with deviceID and deviceName.
+        // We use a local struct to avoid importing TouchBridgeProtocol's IdentifyMessage
+        // (which is fine here since we're in the daemon — same package as DaemonCoordinator).
+        let msg = try WireFormat.decodePayload(IdentifyMessage.self, from: plaintext)
+
+        // Verify this device is actually in the keychain (was paired at some point).
+        guard (try? keychainStore.retrievePairedDevice(deviceID: msg.deviceID)) != nil else {
+            logger.warning("Identify from \(centralID): unknown deviceID \(msg.deviceID) — ignoring")
+            return
+        }
+
+        sessions[centralID]?.deviceID = msg.deviceID
+        logger.info("Identified \(msg.deviceName) (\(msg.deviceID)) on central \(centralID)")
+
+        await auditLog.log(AuditEntry(
+            sessionID: centralID.uuidString,
+            surface: "identify",
+            companionDevice: msg.deviceName,
+            deviceID: msg.deviceID,
+            result: "IDENTIFIED"
+        ))
     }
 }

@@ -31,6 +31,7 @@ public actor PairingManager {
 
     private let keychainStore: KeychainStore
     private let macName: String
+    private let serviceUUID: String
     private let tokenExpiry: TimeInterval
 
     /// Active pairing token and its creation time.
@@ -39,10 +40,12 @@ public actor PairingManager {
     public init(
         keychainStore: KeychainStore,
         macName: String? = nil,
+        serviceUUID: String = TouchBridgeConstants.serviceUUID,
         tokenExpiry: TimeInterval = 300 // 5 minutes
     ) {
         self.keychainStore = keychainStore
         self.macName = macName ?? Host.current().localizedName ?? "Mac"
+        self.serviceUUID = serviceUUID
         self.tokenExpiry = tokenExpiry
     }
 
@@ -61,7 +64,7 @@ public actor PairingManager {
         activePairing = (token: token, createdAt: Date())
 
         let payload = PairingPayload(
-            serviceUUID: TouchBridgeConstants.serviceUUID,
+            serviceUUID: serviceUUID,
             pairingToken: token,
             macName: macName
         )

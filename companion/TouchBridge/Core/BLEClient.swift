@@ -82,6 +82,11 @@ public class BLEClient: NSObject {
     /// The connected peripheral's UUID, if any.
     public var connectedPeripheralID: UUID? { connectedPeripheral?.identifier }
 
+    /// The BLE service UUID to scan for and connect to.
+    /// Set to the paired Mac's unique service UUID after pairing.
+    /// Defaults to the shared protocol UUID (used only during initial discovery).
+    public var serviceUUID: String = TouchBridgeConstants.serviceUUID
+
     public override init() {
         super.init()
         self.centralManager = CBCentralManager(
@@ -102,9 +107,9 @@ public class BLEClient: NSObject {
             return
         }
 
-        let serviceUUID = CBUUID(string: TouchBridgeConstants.serviceUUID)
+        let targetUUID = CBUUID(string: serviceUUID)
         centralManager.scanForPeripherals(
-            withServices: [serviceUUID],
+            withServices: [targetUUID],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
         )
         isScanning = true
@@ -188,7 +193,7 @@ public class BLEClient: NSObject {
 
     private func discoverServices(for peripheral: CBPeripheral) {
         peripheral.delegate = self
-        peripheral.discoverServices([CBUUID(string: TouchBridgeConstants.serviceUUID)])
+        peripheral.discoverServices([CBUUID(string: serviceUUID)])
     }
 
     private func subscribeToNotifications(for peripheral: CBPeripheral) {
@@ -316,7 +321,7 @@ extension BLEClient: CBPeripheralDelegate {
         }
 
         guard let services = peripheral.services else { return }
-        let targetUUID = CBUUID(string: TouchBridgeConstants.serviceUUID)
+        let targetUUID = CBUUID(string: serviceUUID)
 
         for service in services where service.uuid == targetUUID {
             peripheral.discoverCharacteristics(nil, for: service)

@@ -76,6 +76,9 @@ public class BLEServer: NSObject {
     // RSSI proximity gate
     private let rssiThreshold: Int
 
+    // Per-Mac unique service UUID
+    private let serviceUUID: String
+
     public weak var delegate: BLEServerDelegate?
 
     /// Whether the peripheral manager is powered on and ready.
@@ -84,8 +87,12 @@ public class BLEServer: NSObject {
     /// Whether we are currently advertising.
     public private(set) var isAdvertising: Bool = false
 
-    public init(rssiThreshold: Int = TouchBridgeConstants.defaultRSSIThreshold) {
+    public init(
+        rssiThreshold: Int = TouchBridgeConstants.defaultRSSIThreshold,
+        serviceUUID: String = TouchBridgeConstants.serviceUUID
+    ) {
         self.rssiThreshold = rssiThreshold
+        self.serviceUUID = serviceUUID
         super.init()
         self.peripheralManager = CBPeripheralManager(delegate: self, queue: nil)
     }
@@ -100,7 +107,7 @@ public class BLEServer: NSObject {
         }
 
         peripheralManager.startAdvertising([
-            CBAdvertisementDataServiceUUIDsKey: [CBUUID(string: TouchBridgeConstants.serviceUUID)],
+            CBAdvertisementDataServiceUUIDsKey: [CBUUID(string: serviceUUID)],
             CBAdvertisementDataLocalNameKey: "TouchBridge",
         ])
         isAdvertising = true
@@ -181,7 +188,7 @@ public class BLEServer: NSObject {
     // MARK: - Private
 
     private func buildService() {
-        let serviceUUID = CBUUID(string: TouchBridgeConstants.serviceUUID)
+        let serviceUUID = CBUUID(string: self.serviceUUID)
 
         // Session key exchange: writable by central + notifiable
         sessionKeyChar = CBMutableCharacteristic(
