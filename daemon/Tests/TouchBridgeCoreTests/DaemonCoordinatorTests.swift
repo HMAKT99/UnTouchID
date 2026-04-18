@@ -712,6 +712,84 @@ enum TestSetupError: Error { case ecdhFailed }
     _ = await authResult
 }
 
+// MARK: - Edge Cases
+
+@Test func authLateResponseAfterTimeoutIsNoOp() async throws {
+    let (coordinator, bleServer, keychain, _) = makeTestCoordinator()
+    let companion = CompanionSimulator()
+    try register(companion, in: keychain)
+    try await fullyConnect(companion: companion, to: coordinator, via: bleServer)
+
+    async let result = coordinator.authenticateFromPAM(user: "arun", service: "sudo", pid: 1, timeout: 0.05)
+    // Wait past the timeout
+    try await Task.sleep(nanoseconds: 200_000_000)
+
+    // Send a valid response AFTER timeout — OnceContinuation must not crash (no double-resume)
+    guard let challengeWire = bleServer.sentChallenges.last?.data else {
+        Issue.record("No challenge was sent")
+        return
+    }
+    let lateResponse = try companion.respondToChallenge(challengeWire)
+    bleServer.simulateResponse(lateResponse, from: companion.centralID)
+
+    let (success, reason) = await result
+    #expect(success == false)
+    #expect(reason == "timeout")
+}
+
+@Test func authBLESendFailureResultsInImmediateFailure() async throws {
+    let (coordinator, bleServer, keychain, _) = makeTestCoordinator()
+    let companion = CompanionSimulator()
+    try register(companion, in: keychain)
+    try await fullyConnect(companion: companion, to: coordinator, via: bleServer)
+
+    // Simulate BLE transmit queue full — sendChallenge returns false
+    bleServer.sendSucceeds = false
+
+    let start = Date()
+    let result = await coordinator.authenticateFromPAM(user: "arun", service: "sudo", pid: 1, timeout: 5.0)
+    let elapsed = Date().timeIntervalSince(start)
+
+    #expect(result.success == false)
+    #expect(result.reason == "challenge_failed")
+    #expect(elapsed < 1.0)  // must fail fast, not after the full 5s timeout
+}
+
+@Test func authResponseWithWrongDeviceIDIsIgnored() async throws {
+    let (coordinator, bleServer, keychain, _) = makeTestCoordinator()
+    let companion = CompanionSimulator()
+    try register(companion, in: keychain)
+    try await fullyConnect(companion: companion, to: coordinator, via: bleServer)
+
+    async let result = coordinator.authenticateFromPAM(user: "arun", service: "sudo", pid: 1, timeout: 2.0)
+    try await Task.sleep(nanoseconds: 100_000_000)
+
+    guard let challengeWire = bleServer.sentChallenges.last?.data else {
+        Issue.record("No challenge was sent")
+        return
+    }
+    let payload = challengeWire.dropFirst(2)
+    let msg = try WireFormat.decodePayload(ChallengeIssuedMessage.self, from: payload)
+
+    // Spoof: valid challengeID but a deviceID that is not in the keychain
+    let spoofed = ChallengeResponseMessage(
+        challengeID: msg.challengeID,
+        signature: Data(repeating: 0, count: 64),
+        deviceID: "spoofed-unknown-device"
+    )
+    let spoofWire = try WireFormat.encode(.challengeResponse, spoofed)
+    bleServer.simulateResponse(spoofWire, from: companion.centralID)
+    try await Task.sleep(nanoseconds: 50_000_000)  // let coordinator process the spoof
+
+    // Correct response should still resolve auth successfully
+    let goodResponse = try companion.respondToChallenge(challengeWire)
+    bleServer.simulateResponse(goodResponse, from: companion.centralID)
+
+    let (success, reason) = await result
+    #expect(success == true)
+    #expect(reason == nil)
+}
+
 // MARK: - Identify-on-Reconnect
 
 @Test func reconnectAndReidentifyRestoresAuth() async throws {
