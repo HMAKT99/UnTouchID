@@ -8,7 +8,7 @@
     <img src="https://img.shields.io/badge/macOS-13%2B-000?style=flat-square&logo=apple" alt="macOS 13+">
   </p>
   <p align="center">
-    <strong>Use your phone's fingerprint to authenticate on any Mac.</strong><br>
+    <strong>Use your phone's Face ID or fingerprint to authenticate on any Mac.</strong><br>
     sudo, screensaver, App Store — no $199 Magic Keyboard required.
   </p>
   <p align="center">
@@ -114,9 +114,10 @@ sudo echo 'It works!'
 
 **Option A — iPhone (Face ID) — recommended for security:**
 ```
-Open companion/TouchBridge.xcodeproj in Xcode → Build → Run on iPhone → Pair
+Open companion/TouchBridge.xcodeproj in Xcode → Build → Run on iPhone
+Run `touchbridge-test pair` on your Mac → scan the QR code with the app
 ```
-Uses encrypted BLE + Secure Enclave signing. No network involved.
+Pairing uses a single-use token (expires in 5 minutes) — the Mac rejects any device without it. Encrypted BLE + Secure Enclave signing; no network involved.
 
 **Option B — Android (Fingerprint):**
 ```
