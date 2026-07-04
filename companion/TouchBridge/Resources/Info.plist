@@ -17,11 +17,13 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>1.0.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>TouchBridge uses Bluetooth to communicate with your Mac.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>TouchBridge uses the camera to scan the pairing QR code shown on your Mac.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>TouchBridge needs Face ID or Touch ID to authenticate on behalf of your Mac.</string>
 	<key>UIBackgroundModes</key>

@@ -1,4 +1,5 @@
 import ArgumentParser
+import CoreImage
 import Foundation
 import TouchBridgeCore
 import TouchBridgeProtocol
@@ -47,12 +48,20 @@ struct PairCommand: ParsableCommand {
                     print("")
                     print("=== TouchBridge Pairing ===")
                     print("")
-                    print("Scan this data with the TouchBridge companion app:")
+
+                    if let qrURL = Self.writeQRImage(qrData) {
+                        print("Opening QR code — scan it with the TouchBridge app on your iPhone.")
+                        print("  (\(qrURL.path))")
+                        let open = Process()
+                        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                        open.arguments = [qrURL.path]
+                        try? open.run()
+                    }
+
+                    print("")
+                    print("Or paste this pairing data into the app manually:")
                     print("")
                     print(jsonString)
-                    print("")
-                    print("Or use this base64-encoded payload for QR code generation:")
-                    print(qrData.base64EncodedString())
                     print("")
                 }
             } catch {
@@ -98,8 +107,38 @@ struct PairCommand: ParsableCommand {
         semaphore.wait()
         coordinator.stop()
 
+        // The QR image contains the (now spent or expired) pairing token — remove it.
+        try? FileManager.default.removeItem(at: Self.qrImageURL)
+
         if !paired {
             throw ExitCode.failure
+        }
+    }
+
+    private static let qrImageURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("touchbridge-pairing-qr.png")
+
+    /// Render the pairing payload as a QR code PNG. Returns nil if generation fails
+    /// (callers fall back to the printed JSON).
+    private static func writeQRImage(_ payload: Data) -> URL? {
+        guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(payload, forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+
+        guard let ciImage = filter.outputImage else { return nil }
+        let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+
+        let context = CIContext()
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let png = context.pngRepresentation(of: scaled, format: .RGBA8, colorSpace: colorSpace) else {
+            return nil
+        }
+
+        do {
+            try png.write(to: qrImageURL)
+            return qrImageURL
+        } catch {
+            return nil
         }
     }
 }

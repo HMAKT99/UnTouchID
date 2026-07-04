@@ -7,9 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		040D47B57FC27DAE787A2BD8 /* WatchConnectivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 762242442B5240DAAA604E29 /* WatchConnectivityManager.swift */; };
 		1329B644C212BF2C905B6360 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 183DE1B2B9D1033CDB0D5D62 /* Assets.xcassets */; };
 		15C8125204A2A91DE2678048 /* BLEClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57F8EC6ED6D1C5C82C7EE8C2 /* BLEClient.swift */; };
+		1898D1A1736A79F53257DB44 /* StatusWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63EC2EFFAE1697AC3732278A /* StatusWatchView.swift */; };
 		2FC95543131B7D3CB16F3FC9 /* CompanionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3C78F55E6DB1F2960C6F5D6 /* CompanionCoordinator.swift */; };
+		3F0B898F18C788DDEFAB4ED6 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 078C7EEB329211F99CF4968E /* QRScannerView.swift */; };
+		4093BB6B83C68C6C64435A7F /* AuthRequestWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1AC66F9631110C4CD17708 /* AuthRequestWatchView.swift */; };
 		78EED9834B7293BBAF01AB73 /* TouchBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10D23347E7F7DDFA68230A6 /* TouchBridgeApp.swift */; };
 		81E361448AE77E0BD9A407A7 /* DeviceListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B1E51838209923CAE0060DC /* DeviceListView.swift */; };
 		85E69B310C73955C2C7A3A5A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7BD5D1261EF551FC2505CB4 /* SettingsView.swift */; };
@@ -18,13 +22,18 @@
 		A2BB382A6E09AC1CA24251E5 /* WiFiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32E96D6C2B1F1B037D51E2A5 /* WiFiClient.swift */; };
 		A2E048B779E1A84C0038A298 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF1AF5AFE6DCEF27B3FC7572 /* AppDelegate.swift */; };
 		A4E7FBFCFC68696089CC8B53 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FC4D4AB600B34E8D3CFBD05 /* PairingView.swift */; };
+		ABCE8A49AE9E49ACCD936F89 /* TouchBridgeWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3C79DA19236AE908A30CDC0 /* TouchBridgeWatchApp.swift */; };
 		AD77F1F592222C890CD4B0B4 /* TransportClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D998A8660466582AAA77B4CC /* TransportClient.swift */; };
 		C52C7FE36B11B997D57E2103 /* ChallengeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C3C872D829826A04C8AD57 /* ChallengeHandler.swift */; };
 		D59FBAF1B6DA5E929732C089 /* AuthRequestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CF4ACA76B505F210DD6D213 /* AuthRequestView.swift */; };
 		DC81EAEC0EC9E1DCD0E996F0 /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 119CCA65FD28352C92A20EDE /* Constants.swift */; };
+		EEEA9FFD3A1BD501786EF5D6 /* WatchRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0568BA35A750C0906A5EDDED /* WatchRelay.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0568BA35A750C0906A5EDDED /* WatchRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRelay.swift; sourceTree = "<group>"; };
+		078C7EEB329211F99CF4968E /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		0BECC0584B66617082A82941 /* TouchBridgeWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TouchBridgeWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0FC4D4AB600B34E8D3CFBD05 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
 		119CCA65FD28352C92A20EDE /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
 		1553A06E3D55CF83CA48BA48 /* LocalAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAuthManager.swift; sourceTree = "<group>"; };
@@ -32,8 +41,12 @@
 		32E96D6C2B1F1B037D51E2A5 /* WiFiClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WiFiClient.swift; sourceTree = "<group>"; };
 		45BF0771F4FB688424747282 /* SecureEnclaveManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureEnclaveManager.swift; sourceTree = "<group>"; };
 		57F8EC6ED6D1C5C82C7EE8C2 /* BLEClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEClient.swift; sourceTree = "<group>"; };
+		5C1AC66F9631110C4CD17708 /* AuthRequestWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthRequestWatchView.swift; sourceTree = "<group>"; };
+		63EC2EFFAE1697AC3732278A /* StatusWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusWatchView.swift; sourceTree = "<group>"; };
 		6B1E51838209923CAE0060DC /* DeviceListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceListView.swift; sourceTree = "<group>"; };
+		762242442B5240DAAA604E29 /* WatchConnectivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchConnectivityManager.swift; sourceTree = "<group>"; };
 		9CF4ACA76B505F210DD6D213 /* AuthRequestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthRequestView.swift; sourceTree = "<group>"; };
+		A3C79DA19236AE908A30CDC0 /* TouchBridgeWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchBridgeWatchApp.swift; sourceTree = "<group>"; };
 		A848C3A76FA8D8271E2A8BFA /* TouchBridge.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TouchBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D998A8660466582AAA77B4CC /* TransportClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportClient.swift; sourceTree = "<group>"; };
 		DF1AF5AFE6DCEF27B3FC7572 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -45,6 +58,15 @@
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		0AE8E239158E7C9C748068D7 /* TouchBridgeWatch */ = {
+			isa = PBXGroup;
+			children = (
+				F668A84F6A2E464C17203F8D /* App */,
+				F2DC69BCB4311E9D90624DC8 /* Views */,
+			);
+			path = TouchBridgeWatch;
+			sourceTree = "<group>";
+		};
 		33E728E96607DF1F4623CD73 /* App */ = {
 			isa = PBXGroup;
 			children = (
@@ -58,6 +80,7 @@
 			isa = PBXGroup;
 			children = (
 				A848C3A76FA8D8271E2A8BFA /* TouchBridge.app */,
+				0BECC0584B66617082A82941 /* TouchBridgeWatch.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -66,6 +89,7 @@
 			isa = PBXGroup;
 			children = (
 				CB764DA027D055FB16A83EDD /* TouchBridge */,
+				0AE8E239158E7C9C748068D7 /* TouchBridgeWatch */,
 				569D106B4A467A7FBC6AA7BC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -88,9 +112,28 @@
 				9CF4ACA76B505F210DD6D213 /* AuthRequestView.swift */,
 				6B1E51838209923CAE0060DC /* DeviceListView.swift */,
 				0FC4D4AB600B34E8D3CFBD05 /* PairingView.swift */,
+				078C7EEB329211F99CF4968E /* QRScannerView.swift */,
 				E7BD5D1261EF551FC2505CB4 /* SettingsView.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		F2DC69BCB4311E9D90624DC8 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				5C1AC66F9631110C4CD17708 /* AuthRequestWatchView.swift */,
+				63EC2EFFAE1697AC3732278A /* StatusWatchView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		F668A84F6A2E464C17203F8D /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A3C79DA19236AE908A30CDC0 /* TouchBridgeWatchApp.swift */,
+				762242442B5240DAAA604E29 /* WatchConnectivityManager.swift */,
+			);
+			path = App;
 			sourceTree = "<group>";
 		};
 		FA2589AC27C3A789AB48EE5B /* Core */ = {
@@ -103,6 +146,7 @@
 				1553A06E3D55CF83CA48BA48 /* LocalAuthManager.swift */,
 				45BF0771F4FB688424747282 /* SecureEnclaveManager.swift */,
 				D998A8660466582AAA77B4CC /* TransportClient.swift */,
+				0568BA35A750C0906A5EDDED /* WatchRelay.swift */,
 				32E96D6C2B1F1B037D51E2A5 /* WiFiClient.swift */,
 			);
 			path = Core;
@@ -127,6 +171,23 @@
 			);
 			productName = TouchBridge;
 			productReference = A848C3A76FA8D8271E2A8BFA /* TouchBridge.app */;
+			productType = "com.apple.product-type.application";
+		};
+		5C12EE15C658B579A37CE109 /* TouchBridgeWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3B694C8AF49122DC83D3B332 /* Build configuration list for PBXNativeTarget "TouchBridgeWatch" */;
+			buildPhases = (
+				B1235E67E61C60E3E364BC9C /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TouchBridgeWatch;
+			packageProductDependencies = (
+			);
+			productName = TouchBridgeWatch;
+			productReference = 0BECC0584B66617082A82941 /* TouchBridgeWatch.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -155,6 +216,7 @@
 			projectRoot = "";
 			targets = (
 				1AEE967F05B298AE8B3483EA /* TouchBridge */,
+				5C12EE15C658B579A37CE109 /* TouchBridgeWatch */,
 			);
 		};
 /* End PBXProject section */
@@ -184,17 +246,43 @@
 				81E361448AE77E0BD9A407A7 /* DeviceListView.swift in Sources */,
 				9DEDBC4447FD5E3F7C72B7A0 /* LocalAuthManager.swift in Sources */,
 				A4E7FBFCFC68696089CC8B53 /* PairingView.swift in Sources */,
+				3F0B898F18C788DDEFAB4ED6 /* QRScannerView.swift in Sources */,
 				865852FB614DD94A6875806C /* SecureEnclaveManager.swift in Sources */,
 				85E69B310C73955C2C7A3A5A /* SettingsView.swift in Sources */,
 				78EED9834B7293BBAF01AB73 /* TouchBridgeApp.swift in Sources */,
 				AD77F1F592222C890CD4B0B4 /* TransportClient.swift in Sources */,
+				EEEA9FFD3A1BD501786EF5D6 /* WatchRelay.swift in Sources */,
 				A2BB382A6E09AC1CA24251E5 /* WiFiClient.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B1235E67E61C60E3E364BC9C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4093BB6B83C68C6C64435A7F /* AuthRequestWatchView.swift in Sources */,
+				1898D1A1736A79F53257DB44 /* StatusWatchView.swift in Sources */,
+				ABCE8A49AE9E49ACCD936F89 /* TouchBridgeWatchApp.swift in Sources */,
+				040D47B57FC27DAE787A2BD8 /* WatchConnectivityManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		1710B741074274C7DC6571AA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = dev.touchbridge.companion;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.touchbridge.companion.watchapp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Release;
+		};
 		1E7F7B91D0F858D084DB192C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -280,14 +368,14 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.9;
+				WATCHOS_DEPLOYMENT_TARGET = 9.0;
 			};
 			name = Release;
 		};
@@ -344,21 +432,43 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.9;
+				WATCHOS_DEPLOYMENT_TARGET = 9.0;
+			};
+			name = Debug;
+		};
+		D0AD0D226485F1137D6FE427 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = dev.touchbridge.companion;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.touchbridge.companion.watchapp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = 4;
 			};
 			name = Debug;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		3B694C8AF49122DC83D3B332 /* Build configuration list for PBXNativeTarget "TouchBridgeWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D0AD0D226485F1137D6FE427 /* Debug */,
+				1710B741074274C7DC6571AA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		4021C59334F8D2E953522229 /* Build configuration list for PBXProject "TouchBridge" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
