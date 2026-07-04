@@ -1,18 +1,15 @@
 cask "touchbridge" do
-  version "1.0.0"
-  sha256 "16c159670e45a10a2c2a39c178f6aeeddc4b739ebba66e2bd4aa83da24c6efbb"
+  version "1.1.0"
+  sha256 "282e820fe499823c47810061398d17b9b3629c9cfbbbdb8be3e47edcffa58f7c"
 
-  # NOTE: the v1.0.0 release asset kept the legacy 0.1.0 filename.
-  # From the next release on, artifacts are named TouchBridge-#{version}.pkg —
-  # switch both the url and pkg stanzas to use #{version} when bumping.
-  url "https://github.com/HMAKT99/UnTouchID/releases/download/v#{version}/TouchBridge-0.1.0.pkg"
+  url "https://github.com/HMAKT99/UnTouchID/releases/download/v#{version}/TouchBridge-#{version}.pkg"
   name "TouchBridge"
-  desc "Use your phone's fingerprint to authenticate on any Mac"
+  desc "Use your phone's Face ID or fingerprint to authenticate on any Mac"
   homepage "https://github.com/HMAKT99/UnTouchID"
 
   depends_on macos: ">= :ventura"
 
-  pkg "TouchBridge-0.1.0.pkg"
+  pkg "TouchBridge-#{version}.pkg"
 
   uninstall script: {
               executable: "/bin/bash",
@@ -27,6 +24,9 @@ cask "touchbridge" do
 
   caveats <<~EOS
     TouchBridge has been installed.
+
+    Activate the sudo hook (shows a diff and asks before changing anything):
+      sudo bash /usr/local/share/touchbridge/patch-pam.sh
 
     To get started:
       touchbridged serve --simulator    # test without phone
