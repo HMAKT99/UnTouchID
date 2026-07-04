@@ -22,5 +22,10 @@ BLE range is typically 10-30 meters. The RSSI proximity gate (default -75 dBm) l
 ### Background BLE on iOS
 iOS aggressively kills background BLE connections. TouchBridge uses `CBCentralManagerOptionRestoreIdentifierKey` for state restoration, but there may be delays when the app is in the background.
 
-### Single companion device (Phase 0-1)
-Currently supports one paired device. Multi-device support (any paired device can approve) is planned for Phase 5.
+### Multi-device: Mac side vs phone side
+The Mac daemon supports multiple paired companion devices — any paired, connected device can approve a request (first valid response wins; every connected device is notified). The iOS app, however, currently pairs with a single Mac at a time; pairing with a second Mac replaces the first. Multi-Mac support on the phone is planned.
+
+### Other scenarios worth knowing
+- **SSH sessions**: `sudo` inside an SSH session goes through the same PAM stack, so the approval prompt appears on your phone even though you're remote. If your phone isn't near the Mac (BLE range), the request times out and falls back to password.
+- **iPad**: the companion app targets iPhone; iPad is untested as a companion device.
+- **Locked phone**: approval requires unlocking the phone with Face ID/Touch ID — that unlock is the biometric gate. A locked, unattended phone cannot silently approve anything.

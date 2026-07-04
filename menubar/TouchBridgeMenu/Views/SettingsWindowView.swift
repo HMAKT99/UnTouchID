@@ -79,7 +79,7 @@ struct AboutView: View {
             Text("TouchBridge")
                 .font(.title2.bold())
 
-            Text("Version 0.1.0-alpha")
+            Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

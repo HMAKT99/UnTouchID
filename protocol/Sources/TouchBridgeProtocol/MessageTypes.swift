@@ -16,10 +16,18 @@ public enum MessageType: UInt8, Codable, Sendable {
 public struct PairRequestMessage: Codable, Sendable {
     public let deviceName: String
     public let publicKey: Data
+    /// Companion's stable device identifier — the daemon keys the stored public key
+    /// by this ID, and the companion presents it in identify and challenge responses.
+    public let deviceID: String?
+    /// One-time pairing token from the QR/pairing payload. The daemon rejects
+    /// pairing requests whose token doesn't match the active pairing session.
+    public let pairingToken: Data?
 
-    public init(deviceName: String, publicKey: Data) {
+    public init(deviceName: String, publicKey: Data, deviceID: String? = nil, pairingToken: Data? = nil) {
         self.deviceName = deviceName
         self.publicKey = publicKey
+        self.deviceID = deviceID
+        self.pairingToken = pairingToken
     }
 }
 

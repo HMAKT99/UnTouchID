@@ -19,13 +19,22 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
     public let keychainStore: KeychainStore
     public let auditLog: AuditLog
 
-    // Per-central session state
+    /// Guards `sessions` and `pendingAuthentications` — both are mutated from
+    /// CoreBluetooth delegate callbacks, detached Tasks, and PAM auth calls,
+    /// which run on different threads.
+    private let stateLock = NSLock()
+
+    // Per-central session state (access only while holding stateLock)
     private var sessions: [UUID: SessionState] = [:]
 
     /// Pending PAM authentications awaiting challenge results.
     /// Each auth broadcast stores the same OnceContinuation under multiple challenge IDs
     /// (one per device), so the first valid response wins and subsequent responses are no-ops.
+    /// (access only while holding stateLock)
     private var pendingAuthentications: [UUID: OnceContinuation] = [:]
+
+    /// Periodic maintenance task pruning expired challenges and replay nonces.
+    private var pruneTask: Task<Void, Never>?
 
     /// Callback invoked when a challenge is verified or fails.
     public var onChallengeResult: ((UUID, ChallengeResult, String?) -> Void)?
@@ -67,6 +76,16 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
         logger.info("DaemonCoordinator starting")
         // BLEServer will start advertising once Bluetooth is powered on
         // (handled in peripheralManagerDidUpdateState via delegate)
+
+        // Unanswered challenges and replay nonces otherwise accumulate for the
+        // lifetime of the daemon — prune them periodically.
+        pruneTask?.cancel()
+        pruneTask = Task { [challengeManager] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                await challengeManager.pruneExpired()
+            }
+        }
     }
 
     /// Start advertising (call after BLE is ready).
@@ -77,7 +96,9 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
     /// Stop advertising and clean up.
     public func stop() {
         bleServer.stopAdvertising()
-        sessions.removeAll()
+        pruneTask?.cancel()
+        pruneTask = nil
+        stateLock.withLock { sessions.removeAll() }
         logger.info("DaemonCoordinator stopped")
     }
 
@@ -88,7 +109,8 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
     ///   - reason: The reason string to show on the companion (e.g., "sudo").
     /// - Returns: The challenge ID, or nil if sending failed.
     public func issueChallenge(to centralID: UUID, reason: String) async -> UUID? {
-        guard let session = sessions[centralID],
+        let session = stateLock.withLock { sessions[centralID] }
+        guard let session,
               let crypto = session.sessionCrypto,
               let deviceID = session.deviceID else {
             logger.warning("Cannot issue challenge: no session for central \(centralID)")
@@ -144,7 +166,9 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
     ) async -> (success: Bool, reason: String?) {
         // Only challenge sessions that have completed ECDH AND identified as a known paired device.
         // Unknown/anonymous centrals (e.g. stranger's phone that happens to be nearby) are excluded.
-        let targets = readyCentrals.filter { sessions[$0]?.deviceID != nil }
+        let targets = stateLock.withLock {
+            sessions.filter { $0.value.sessionCrypto != nil && $0.value.deviceID != nil }.map(\.key)
+        }
 
         guard !targets.isEmpty else {
             logger.warning("PAM auth: no identified companion connected (ready=\(self.readyCentrals.count))")
@@ -170,6 +194,10 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
         //
         // With two unstructured Tasks sharing one OnceContinuation, the first resume wins;
         // subsequent resumes (from late responses or cleanup) are silent no-ops.
+        // Challenge IDs issued for THIS auth — cleaned up once the auth resolves,
+        // so losing/timed-out entries don't leak in pendingAuthentications.
+        let issuedIDs = LockedBox<[UUID]>([])
+
         let result: ChallengeResult? = await withCheckedContinuation { outer in
             let wrapped = OnceContinuation(outer)
 
@@ -178,7 +206,10 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
                 var issued = 0
                 for centralID in targets {
                     if let challengeID = await self.issueChallenge(to: centralID, reason: service) {
-                        self.pendingAuthentications[challengeID] = wrapped
+                        self.stateLock.withLock {
+                            self.pendingAuthentications[challengeID] = wrapped
+                        }
+                        issuedIDs.mutate { $0.append(challengeID) }
                         issued += 1
                     }
                 }
@@ -192,6 +223,14 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 wrapped.resume(returning: nil)
+            }
+        }
+
+        // The auth is resolved — drop every challenge entry it created (the winning
+        // response already removed its own; siblings and timeouts are removed here).
+        stateLock.withLock {
+            for id in issuedIDs.value {
+                pendingAuthentications.removeValue(forKey: id)
             }
         }
 
@@ -215,7 +254,9 @@ public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Senda
 
     /// Get all connected central UUIDs that have completed ECDH.
     public var readyCentrals: [UUID] {
-        sessions.filter { $0.value.sessionCrypto != nil }.map(\.key)
+        stateLock.withLock {
+            sessions.filter { $0.value.sessionCrypto != nil }.map(\.key)
+        }
     }
 }
 
@@ -225,12 +266,12 @@ extension DaemonCoordinator: BLEServerDelegate {
 
     public func bleServer(_ server: any BLEServerInterface, centralDidConnect centralID: UUID) {
         logger.info("Central connected: \(centralID)")
-        sessions[centralID] = SessionState()
+        stateLock.withLock { sessions[centralID] = SessionState() }
     }
 
     public func bleServer(_ server: any BLEServerInterface, centralDidDisconnect centralID: UUID) {
         logger.info("Central disconnected: \(centralID)")
-        sessions.removeValue(forKey: centralID)
+        stateLock.withLock { _ = sessions.removeValue(forKey: centralID) }
     }
 
     public func bleServer(_ server: any BLEServerInterface, didReceiveSessionKey data: Data, from centralID: UUID) -> Data? {
@@ -246,8 +287,10 @@ extension DaemonCoordinator: BLEServerDelegate {
             // Derive session
             let session = try SessionCrypto.deriveSession(myPrivate: myPrivate, theirPublic: theirPublic)
 
-            sessions[centralID]?.ephemeralPrivateKey = myPrivate
-            sessions[centralID]?.sessionCrypto = session
+            stateLock.withLock {
+                sessions[centralID]?.ephemeralPrivateKey = myPrivate
+                sessions[centralID]?.sessionCrypto = session
+            }
 
             logger.info("ECDH session established with \(centralID)")
 
@@ -277,14 +320,14 @@ extension DaemonCoordinator: BLEServerDelegate {
                 let request = try WireFormat.decodePayload(PairRequestMessage.self, from: payload)
 
                 let device = try await pairingManager.validatePairingRequest(
-                    token: Data(), // Token comes from the QR code scan, validated separately
+                    token: request.pairingToken ?? Data(),
                     devicePublicKey: request.publicKey,
                     deviceName: request.deviceName,
-                    deviceID: centralID.uuidString
+                    deviceID: request.deviceID ?? centralID.uuidString
                 )
 
                 try await pairingManager.completePairing(device: device)
-                sessions[centralID]?.deviceID = device.deviceID
+                stateLock.withLock { sessions[centralID]?.deviceID = device.deviceID }
 
                 // Send acceptance response
                 let response = PairResponseMessage(
@@ -330,7 +373,7 @@ extension DaemonCoordinator: BLEServerDelegate {
                 // Handle companion error messages (e.g. key invalidated).
                 // The error payload is AES-GCM encrypted with the session key.
                 if msgType == .error {
-                    guard let crypto = sessions[centralID]?.sessionCrypto else {
+                    guard let crypto = stateLock.withLock({ sessions[centralID]?.sessionCrypto }) else {
                         logger.warning("Error message from \(centralID) but no session crypto — ignoring")
                         return
                     }
@@ -349,9 +392,10 @@ extension DaemonCoordinator: BLEServerDelegate {
                             deviceID: errMsg.description,
                             result: "FAILED_KEY_INVALIDATED"
                         ))
-                        if let continuation = pendingAuthentications.removeValue(forKey: challengeID) {
-                            continuation.resume(returning: .keyInvalidated)
+                        let continuation = stateLock.withLock {
+                            pendingAuthentications.removeValue(forKey: challengeID)
                         }
+                        continuation?.resume(returning: .keyInvalidated)
                     }
                     return
                 }
@@ -395,9 +439,10 @@ extension DaemonCoordinator: BLEServerDelegate {
                 ))
 
                 // Resume any pending PAM authentication continuation
-                if let continuation = pendingAuthentications.removeValue(forKey: challengeID) {
-                    continuation.resume(returning: result)
+                let continuation = stateLock.withLock {
+                    pendingAuthentications.removeValue(forKey: challengeID)
                 }
+                continuation?.resume(returning: result)
 
                 onChallengeResult?(challengeID, result, response.deviceID)
 
@@ -416,8 +461,7 @@ extension DaemonCoordinator: BLEServerDelegate {
     /// without going through a full pairing ceremony. The daemon looks up the deviceID in
     /// the keychain and, if found, marks the session as identified so it can receive challenges.
     private func handleIdentify(data: Data, from centralID: UUID) async throws {
-        guard let session = sessions[centralID],
-              let crypto = session.sessionCrypto else {
+        guard let crypto = stateLock.withLock({ sessions[centralID]?.sessionCrypto }) else {
             logger.warning("Identify from \(centralID): no session crypto — ignoring")
             return
         }
@@ -437,7 +481,7 @@ extension DaemonCoordinator: BLEServerDelegate {
             return
         }
 
-        sessions[centralID]?.deviceID = msg.deviceID
+        stateLock.withLock { sessions[centralID]?.deviceID = msg.deviceID }
         logger.info("Identified \(msg.deviceName) (\(msg.deviceID)) on central \(centralID)")
 
         await auditLog.log(AuditEntry(
@@ -447,6 +491,26 @@ extension DaemonCoordinator: BLEServerDelegate {
             deviceID: msg.deviceID,
             result: "IDENTIFIED"
         ))
+    }
+}
+
+// MARK: - LockedBox
+
+/// Minimal lock-guarded mutable container for values shared across concurrent Tasks.
+final class LockedBox<T>: @unchecked Sendable {
+    private var _value: T
+    private let lock = NSLock()
+
+    init(_ value: T) {
+        self._value = value
+    }
+
+    var value: T {
+        lock.withLock { _value }
+    }
+
+    func mutate(_ body: (inout T) -> Void) {
+        lock.withLock { body(&_value) }
     }
 }
 

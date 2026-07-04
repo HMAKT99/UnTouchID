@@ -48,4 +48,5 @@ Every authentication event is logged to `~/Library/Logs/TouchBridge/` as NDJSON:
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | Yes       |
+| 1.0.x   | Yes       |
+| 0.1.x   | No — upgrade to 1.0 |

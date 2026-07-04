@@ -10,7 +10,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
 
 targets:
@@ -30,10 +30,11 @@ targets:
       path: TouchBridge/Resources/Info.plist
       properties:
         CFBundleDisplayName: TouchBridge
-        CFBundleShortVersionString: "0.1.0"
+        CFBundleShortVersionString: "1.0.0"
         CFBundleVersion: "1"
         NSFaceIDUsageDescription: "TouchBridge needs Face ID or Touch ID to authenticate on behalf of your Mac."
         NSBluetoothAlwaysUsageDescription: "TouchBridge uses Bluetooth to communicate with your Mac."
+        NSCameraUsageDescription: "TouchBridge uses the camera to scan the pairing QR code shown on your Mac."
         UIBackgroundModes:
           - bluetooth-central
         UILaunchScreen:

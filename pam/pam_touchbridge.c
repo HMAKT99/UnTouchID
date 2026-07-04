@@ -137,8 +137,11 @@ static int connect_to_daemon(const char *sock_path, int timeout_sec)
         return -1;
     }
 
-    /* Set receive timeout */
-    tv.tv_sec = timeout_sec;
+    /* Set receive timeout with a 2s grace margin over the daemon's auth
+     * window (both default to 15s). Without the margin they race: PAM can
+     * give up at the exact moment the daemon sends its result, losing an
+     * approval that already happened. */
+    tv.tv_sec = timeout_sec + 2;
     tv.tv_usec = 0;
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 

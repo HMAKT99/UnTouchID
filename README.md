@@ -4,7 +4,7 @@
     <a href="https://github.com/HMAKT99/UnTouchID/stargazers"><img src="https://img.shields.io/github/stars/HMAKT99/UnTouchID?style=flat-square&color=30d158" alt="Stars"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
     <a href="https://github.com/HMAKT99/UnTouchID/releases"><img src="https://img.shields.io/github/v/release/HMAKT99/UnTouchID?style=flat-square&color=ff9500" alt="Release"></a>
-    <img src="https://img.shields.io/badge/tests-91%20passing-30d158?style=flat-square" alt="Tests">
+    <img src="https://img.shields.io/badge/tests-127%20passing-30d158?style=flat-square" alt="Tests">
     <img src="https://img.shields.io/badge/macOS-13%2B-000?style=flat-square&logo=apple" alt="macOS 13+">
   </p>
   <p align="center">
@@ -315,7 +315,7 @@ Private keys **never leave** Secure Enclave (iPhone) / StrongBox (Android). 32-b
 | Web companion | Built into daemon |
 | `touchbridge-test` | Swift CLI |
 
-**91 tests** — crypto, socket server, PAM integration, E2E pipeline.
+**127 tests** — crypto, socket server, PAM integration, E2E pipeline.
 
 ## Uninstall
 

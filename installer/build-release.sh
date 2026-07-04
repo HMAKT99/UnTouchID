@@ -13,7 +13,14 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/installer/build"
 RELEASE_DIR="$PROJECT_DIR/installer/release"
 
-echo "=== TouchBridge Release Builder ==="
+# Version: override with VERSION=x.y.z, else derive from latest git tag
+VERSION="${VERSION:-$(git -C "$PROJECT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}"
+if [ -z "$VERSION" ]; then
+    echo "ERROR: could not determine version (no git tag found). Set VERSION=x.y.z" >&2
+    exit 1
+fi
+
+echo "=== TouchBridge Release Builder (v$VERSION) ==="
 echo ""
 
 rm -rf "$BUILD_DIR" "$RELEASE_DIR"
@@ -65,6 +72,7 @@ cp "$BUILD_DIR/touchbridge-nmh" "$PKG_ROOT/usr/local/bin/"
 cp "$BUILD_DIR/pam_touchbridge.so" "$PKG_ROOT/usr/local/lib/pam/"
 cp "$PROJECT_DIR/scripts/install.sh" "$PKG_ROOT/usr/local/share/touchbridge/"
 cp "$PROJECT_DIR/scripts/uninstall.sh" "$PKG_ROOT/usr/local/share/touchbridge/"
+cp "$PROJECT_DIR/scripts/patch-pam.sh" "$PKG_ROOT/usr/local/share/touchbridge/"
 cp "$PROJECT_DIR/daemon/dev.touchbridge.daemon.plist" "$PKG_ROOT/usr/local/share/touchbridge/"
 
 # Post-install script
@@ -98,9 +106,9 @@ pkgbuild \
     --root "$PKG_ROOT" \
     --scripts "$BUILD_DIR" \
     --identifier "dev.touchbridge.pkg" \
-    --version "0.1.0" \
+    --version "$VERSION" \
     --install-location "/" \
-    "$RELEASE_DIR/TouchBridge-0.1.0.pkg" 2>&1 | tail -1
+    "$RELEASE_DIR/TouchBridge-$VERSION.pkg" 2>&1 | tail -1
 
 echo "  ✓ Installer package created"
 
@@ -112,14 +120,14 @@ mkdir -p "$DMG_DIR"
 if [ -d "$BUILD_DIR/TouchBridge.app" ]; then
     cp -R "$BUILD_DIR/TouchBridge.app" "$DMG_DIR/"
 fi
-cp "$RELEASE_DIR/TouchBridge-0.1.0.pkg" "$DMG_DIR/"
+cp "$RELEASE_DIR/TouchBridge-$VERSION.pkg" "$DMG_DIR/"
 
 # Create a simple README in the DMG
-cat > "$DMG_DIR/README.txt" << 'README'
+cat > "$DMG_DIR/README.txt" << README
 TouchBridge — Use your phone's fingerprint on any Mac
 
 INSTALL:
-  Option A: Double-click TouchBridge-0.1.0.pkg (recommended)
+  Option A: Double-click TouchBridge-$VERSION.pkg (recommended)
   Option B: Drag TouchBridge.app to Applications
 
 After installing, open TouchBridge from your menu bar.
@@ -132,7 +140,7 @@ hdiutil create \
     -srcfolder "$DMG_DIR" \
     -ov \
     -format UDZO \
-    "$RELEASE_DIR/TouchBridge-0.1.0.dmg" 2>&1 | tail -1
+    "$RELEASE_DIR/TouchBridge-$VERSION.dmg" 2>&1 | tail -1
 
 echo "  ✓ Disk image created"
 

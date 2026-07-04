@@ -69,7 +69,14 @@ This installs:
 The installer places the binaries but you need to activate the PAM hook. Run once:
 
 ```bash
-sudo bash /usr/local/share/touchbridge/scripts/patch-pam.sh
+sudo bash /usr/local/share/touchbridge/patch-pam.sh
+```
+
+If that file doesn't exist (installs from v1.0.0 or earlier), fetch it from the repo first:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/HMAKT99/UnTouchID/main/scripts/patch-pam.sh
+sudo bash patch-pam.sh
 ```
 
 This shows you exactly what will change and asks for confirmation before touching any PAM file.
@@ -164,7 +171,7 @@ On your Mac:
 touchbridge-test pair
 ```
 
-This prints pairing JSON in the terminal, for example:
+This opens a QR code on your Mac and also prints the pairing JSON, for example:
 ```
 {"version":1,"serviceUUID":"B5E6D1A4-...","pairingToken":"...","macName":"Mac Mini"}
 ```
@@ -172,11 +179,12 @@ This prints pairing JSON in the terminal, for example:
 On your iPhone:
 1. Open the **TouchBridge** app
 2. Tap **Get Started**
-3. Tap **Enter Pairing Data**
-4. Paste the JSON from your terminal
-5. Tap **Pair**
+3. Tap **Scan QR Code** and point the camera at the QR on your Mac
+   (or tap **Enter Pairing Data** and paste the JSON manually)
 
-Both sides confirm pairing is complete.
+The pairing token in the QR is single-use and expires after 5 minutes — the Mac
+rejects any pairing attempt without a matching token. Both sides confirm pairing
+is complete.
 
 #### Step 3 — Restart the daemon
 

@@ -50,8 +50,8 @@ struct SettingsView: View {
             }
 
             Section("About") {
-                LabeledContent("Version", value: "0.1.0-alpha")
-                LabeledContent("Build", value: "1")
+                LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
+                LabeledContent("Build", value: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")
 
                 Link(destination: URL(string: "https://github.com/HMAKT99/UnTouchID")!) {
                     HStack {

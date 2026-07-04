@@ -5,6 +5,7 @@ struct PairingView: View {
     @ObservedObject var appState: AppState
     @State private var pairingStatus: PairingStatus = .idle
     @State private var showManualEntry = false
+    @State private var showScanner = false
     @State private var manualInput = ""
     @State private var discoveredMacs: [UUID] = []
 
@@ -26,7 +27,7 @@ struct PairingView: View {
             Text("Pair with your Mac")
                 .font(.title2.bold())
 
-            Text("Run 'touchbridge-test pair' on your Mac, then enter the pairing data below.")
+            Text("Run 'touchbridge-test pair' on your Mac, then scan the QR code it shows.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -36,17 +37,17 @@ struct PairingView: View {
             case .idle:
                 VStack(spacing: 12) {
                     Button {
-                        showManualEntry = true
+                        showScanner = true
                     } label: {
-                        Label("Enter Pairing Data", systemImage: "keyboard")
+                        Label("Scan QR Code", systemImage: "qrcode.viewfinder")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
 
                     Button {
-                        startScanning()
+                        showManualEntry = true
                     } label: {
-                        Label("Scan for Nearby Mac", systemImage: "antenna.radiowaves.left.and.right")
+                        Label("Enter Pairing Data", systemImage: "keyboard")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -103,12 +104,31 @@ struct PairingView: View {
                 }
             )
         }
+        .sheet(isPresented: $showScanner) {
+            NavigationStack {
+                QRScannerView { scanned in
+                    showScanner = false
+                    handlePairingData(scanned)
+                }
+                .ignoresSafeArea()
+                .navigationTitle("Scan QR Code")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showScanner = false }
+                    }
+                }
+            }
+        }
         .onAppear {
-            // Wire coordinator pairing callback
+            // Wire coordinator pairing callbacks
             appState.coordinator.onPairingComplete = { [weak appState] macID in
                 pairingStatus = .paired
                 appState?.isPaired = true
                 appState?.statusMessage = "Paired with Mac"
+            }
+            appState.coordinator.onPairingFailed = {
+                pairingStatus = .failed("Mac rejected pairing. Run 'touchbridge-test pair' again and use fresh pairing data — tokens expire after 5 minutes.")
             }
         }
     }
@@ -140,8 +160,6 @@ struct PairingView: View {
     }
 
     private func handlePairingData(_ jsonString: String) {
-        pairingStatus = .connecting
-
         guard let data = jsonString.data(using: .utf8) else {
             pairingStatus = .failed("Invalid pairing data")
             return
@@ -150,19 +168,25 @@ struct PairingView: View {
         do {
             let payload = try JSONDecoder().decode(PairingPayloadCompanion.self, from: data)
 
-            // Store Mac info and mark as paired
-            UserDefaults.standard.set(payload.macName, forKey: "pairedMacName")
-            UserDefaults.standard.set(payload.serviceUUID, forKey: "pairedMacID")
+            // Scan for the Mac advertised in the payload, holding its one-time token.
+            // Pairing is only complete once the Mac validates the token and accepts
+            // (onPairingComplete fires) — not when the payload parses.
+            pairingStatus = .scanning
+            appState.coordinator.beginPairing(
+                serviceUUID: payload.serviceUUID,
+                token: payload.pairingToken,
+                macName: payload.macName
+            )
 
-            // Generate signing key if we don't have one
-            _ = try? appState.coordinator.getOrCreateSigningKey()
-
-            // Start scanning to connect to this Mac
-            appState.coordinator.startScanning()
-
-            pairingStatus = .paired
-            appState.isPaired = true
-            appState.statusMessage = "Paired with \(payload.macName)"
+            // Auto-connect to the Mac as soon as it's discovered
+            Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
+                if pairingStatus == .scanning, let mac = appState.coordinator.discoveredMacs.first {
+                    timer.invalidate()
+                    connectTo(mac)
+                } else if pairingStatus != .scanning {
+                    timer.invalidate()
+                }
+            }
         } catch {
             pairingStatus = .failed("Failed to parse: \(error.localizedDescription)")
         }
