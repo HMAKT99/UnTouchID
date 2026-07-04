@@ -2,6 +2,9 @@ cask "touchbridge" do
   version "1.0.0"
   sha256 "16c159670e45a10a2c2a39c178f6aeeddc4b739ebba66e2bd4aa83da24c6efbb"
 
+  # NOTE: the v1.0.0 release asset kept the legacy 0.1.0 filename.
+  # From the next release on, artifacts are named TouchBridge-#{version}.pkg —
+  # switch both the url and pkg stanzas to use #{version} when bumping.
   url "https://github.com/HMAKT99/UnTouchID/releases/download/v#{version}/TouchBridge-0.1.0.pkg"
   name "TouchBridge"
   desc "Use your phone's fingerprint to authenticate on any Mac"
