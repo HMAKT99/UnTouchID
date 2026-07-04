@@ -790,6 +790,164 @@ enum TestSetupError: Error { case ecdhFailed }
     #expect(reason == nil)
 }
 
+// MARK: - Pairing Token Enforcement
+
+/// Creates a coordinator whose PairingManager is accessible for opening pairing windows.
+private func makePairingTestCoordinator() -> (
+    coordinator: DaemonCoordinator,
+    bleServer: MockBLEServer,
+    keychain: KeychainStore,
+    pairingManager: PairingManager
+) {
+    let bleServer = MockBLEServer()
+    let keychain = KeychainStore(service: "dev.touchbridge.test.\(UUID().uuidString)")
+    let logDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tb-test-\(UUID().uuidString)")
+    let auditLog = AuditLog(logDirectory: logDir)
+    let pairingManager = PairingManager(keychainStore: keychain)
+
+    let coordinator = DaemonCoordinator(
+        keychainStore: keychain,
+        auditLog: auditLog,
+        pairingManager: pairingManager,
+        bleServer: bleServer
+    )
+    return (coordinator, bleServer, keychain, pairingManager)
+}
+
+extension CompanionSimulator {
+    /// Build a wire-format pair request: [1, 1] + JSON PairRequestMessage.
+    func makePairRequest(token: Data?) throws -> Data {
+        let msg = PairRequestMessage(
+            deviceName: deviceName,
+            publicKey: signingPublicKeyData,
+            deviceID: deviceID,
+            pairingToken: token
+        )
+        return try WireFormat.encode(.pairRequest, msg)
+    }
+}
+
+/// Decode the daemon's last pairing response, if any.
+private func lastPairResponse(_ bleServer: MockBLEServer) throws -> PairResponseMessage? {
+    guard let sent = bleServer.sentPairingResponses.last else { return nil }
+    let (type, payload) = try WireFormat.decode(data: sent.data)
+    guard type == .pairResponse else { return nil }
+    return try WireFormat.decodePayload(PairResponseMessage.self, from: payload)
+}
+
+@Test func pairingWithValidTokenSucceeds() async throws {
+    let (coordinator, bleServer, keychain, pairingManager) = makePairingTestCoordinator()
+
+    // Open a pairing window and extract the token from the QR payload
+    let qrData = try await pairingManager.generatePairingQRData()
+    let payload = try JSONDecoder().decode(PairingPayload.self, from: qrData)
+
+    let companion = CompanionSimulator()
+    bleServer.simulateConnect(companion.centralID)
+
+    let wire = try companion.makePairRequest(token: payload.pairingToken)
+    bleServer.simulatePairingData(wire, from: companion.centralID)
+    try await Task.sleep(nanoseconds: 150_000_000)
+
+    let response = try lastPairResponse(bleServer)
+    #expect(response?.accepted == true)
+    // Device must be stored under the companion's own deviceID so later
+    // identify and challenge responses can find its public key.
+    #expect(response?.deviceID == companion.deviceID)
+    #expect(throws: Never.self) { try keychain.retrievePublicKey(for: companion.deviceID) }
+    withExtendedLifetime(coordinator) {}
+}
+
+@Test func pairingWithWrongTokenIsRejected() async throws {
+    let (coordinator, bleServer, keychain, pairingManager) = makePairingTestCoordinator()
+
+    _ = try await pairingManager.generatePairingQRData()
+
+    let companion = CompanionSimulator()
+    bleServer.simulateConnect(companion.centralID)
+
+    let wrongToken = Data(repeating: 0xAB, count: 16)
+    let wire = try companion.makePairRequest(token: wrongToken)
+    bleServer.simulatePairingData(wire, from: companion.centralID)
+    try await Task.sleep(nanoseconds: 150_000_000)
+
+    let response = try lastPairResponse(bleServer)
+    #expect(response?.accepted == false)
+    #expect(throws: (any Error).self) { try keychain.retrievePublicKey(for: companion.deviceID) }
+    withExtendedLifetime(coordinator) {}
+}
+
+@Test func pairingWithMissingTokenIsRejected() async throws {
+    let (coordinator, bleServer, keychain, pairingManager) = makePairingTestCoordinator()
+
+    _ = try await pairingManager.generatePairingQRData()
+
+    let companion = CompanionSimulator()
+    bleServer.simulateConnect(companion.centralID)
+
+    let wire = try companion.makePairRequest(token: nil)
+    bleServer.simulatePairingData(wire, from: companion.centralID)
+    try await Task.sleep(nanoseconds: 150_000_000)
+
+    let response = try lastPairResponse(bleServer)
+    #expect(response?.accepted == false)
+    #expect(throws: (any Error).self) { try keychain.retrievePublicKey(for: companion.deviceID) }
+    withExtendedLifetime(coordinator) {}
+}
+
+@Test func pairingWithNoActiveWindowIsRejected() async throws {
+    let (coordinator, bleServer, keychain, pairingManager) = makePairingTestCoordinator()
+    // No generatePairingQRData() — no pairing window is open
+
+    let companion = CompanionSimulator()
+    bleServer.simulateConnect(companion.centralID)
+
+    let wire = try companion.makePairRequest(token: Data(repeating: 0xCD, count: 16))
+    bleServer.simulatePairingData(wire, from: companion.centralID)
+    try await Task.sleep(nanoseconds: 150_000_000)
+
+    let response = try lastPairResponse(bleServer)
+    #expect(response?.accepted == false)
+    #expect(throws: (any Error).self) { try keychain.retrievePublicKey(for: companion.deviceID) }
+    _ = pairingManager
+    withExtendedLifetime(coordinator) {}
+}
+
+@Test func pairedDeviceCanAuthenticateAfterTokenPairing() async throws {
+    let (coordinator, bleServer, _, pairingManager) = makePairingTestCoordinator()
+
+    let qrData = try await pairingManager.generatePairingQRData()
+    let payload = try JSONDecoder().decode(PairingPayload.self, from: qrData)
+
+    let companion = CompanionSimulator()
+    bleServer.simulateConnect(companion.centralID)
+
+    // ECDH first (as the real app does), then pair with the token
+    let clientKey = companion.ecdhPublicKeyData()
+    let serverKey = bleServer.simulateSessionKey(clientKey, from: companion.centralID)!
+    try companion.completeECDH(daemonPublicKeyData: serverKey)
+
+    let wire = try companion.makePairRequest(token: payload.pairingToken)
+    bleServer.simulatePairingData(wire, from: companion.centralID)
+    try await Task.sleep(nanoseconds: 150_000_000)
+
+    // Pairing marks the session identified — auth should work immediately
+    async let authResult = coordinator.authenticateFromPAM(
+        user: "arun", service: "sudo", pid: 1, timeout: 5.0
+    )
+    try await Task.sleep(nanoseconds: 150_000_000)
+    guard let sent = bleServer.sentChallenges.last else {
+        Issue.record("No challenge sent after pairing")
+        return
+    }
+    let response = try companion.respondToChallenge(sent.data)
+    bleServer.simulateResponse(response, from: companion.centralID)
+
+    let result = await authResult
+    #expect(result.success == true)
+}
+
 // MARK: - Identify-on-Reconnect
 
 @Test func reconnectAndReidentifyRestoresAuth() async throws {
