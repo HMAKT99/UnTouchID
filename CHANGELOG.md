@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.1.0] — 2026-07-04
+
+### Pairing Security
+- Pairing token from the QR payload is now **enforced end-to-end**: the daemon
+  rejects any pairing request whose single-use token doesn't match the active
+  5-minute pairing window (previously the token was generated but never validated)
+- iOS app sends wire-format pair requests and reports "Paired" only after the
+  Mac accepts; rejections show recovery instructions
+- Paired devices are stored under their own device ID, fixing re-identify and
+  challenge verification after reconnect
+
+### QR Code Pairing
+- `touchbridge-test pair` now renders the pairing payload as a QR code image
+  and opens it automatically (deleted when pairing ends)
+- iOS app: camera QR scanner as the primary pairing path; manual JSON entry
+  remains as fallback
+
+### Background Auth Notifications (iOS)
+- Challenges arriving while the app is backgrounded now post a local
+  notification; Face ID runs when the app is opened
+
+### Daemon Hardening
+- Shared session state is lock-protected (fixes data races under concurrent
+  BLE callbacks)
+- Pending-auth entries are cleaned up after each auth resolves; expired
+  challenges and replay nonces are pruned every 60 seconds
+- PAM socket timeout now exceeds the daemon auth window by 2s, so approvals
+  landing at the deadline are no longer lost
+
+### Distribution & Docs
+- New `scripts/patch-pam.sh` — standalone PAM activation for Homebrew/pkg
+  installs (docs previously pointed to a file that didn't exist)
+- Release artifacts are versioned from the git tag
+- Test suite: 127 Swift tests (111 daemon + 16 protocol) + 38-check e2e
+  validation suite
+
 ## [1.0.0] — 2026-03-29
 
 ### Menu Bar App & Installer
