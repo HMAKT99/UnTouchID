@@ -288,8 +288,11 @@ extension DaemonCoordinator: BLEServerDelegate {
             let session = try SessionCrypto.deriveSession(myPrivate: myPrivate, theirPublic: theirPublic)
 
             stateLock.withLock {
-                sessions[centralID]?.ephemeralPrivateKey = myPrivate
-                sessions[centralID]?.sessionCrypto = session
+                var state = sessions[centralID] ?? SessionState()
+                state.ephemeralPrivateKey = myPrivate
+                state.sessionCrypto = session
+                state.deviceID = nil
+                sessions[centralID] = state
             }
 
             logger.info("ECDH session established with \(centralID)")

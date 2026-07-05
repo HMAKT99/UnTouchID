@@ -285,7 +285,7 @@ private func fullyConnect(
     // Identify: companion sends encrypted identity
     let identifyData = try companion.makeIdentifyData()
     bleServer.simulatePairingData(identifyData, from: companion.centralID)
-    try await Task.sleep(nanoseconds: 80_000_000) // let the async identify Task complete
+    try await Task.sleep(nanoseconds: 200_000_000) // let the async identify Task complete
 }
 
 enum TestSetupError: Error { case ecdhFailed }
@@ -317,6 +317,44 @@ enum TestSetupError: Error { case ecdhFailed }
     #expect(throws: Never.self) {
         try companion.completeECDH(daemonPublicKeyData: serverPubKey!)
     }
+}
+
+@Test func ecdhWithoutConnectCreatesRecoverableSession() async throws {
+    let (coordinator, bleServer, keychain, _) = makeTestCoordinator()
+    let companion = CompanionSimulator()
+    try register(companion, in: keychain)
+
+    // Reproduces a restored/stale CoreBluetooth path where the daemon receives
+    // the ECDH write before it has observed centralDidConnect for that central.
+    let clientPubKey = companion.ecdhPublicKeyData()
+    guard let serverPubKey = bleServer.simulateSessionKey(clientPubKey, from: companion.centralID) else {
+        Issue.record("Daemon did not respond to ECDH without a prior connect event")
+        return
+    }
+
+    #expect(coordinator.readyCentrals.contains(companion.centralID))
+    try companion.completeECDH(daemonPublicKeyData: serverPubKey)
+
+    let identifyData = try companion.makeIdentifyData()
+    bleServer.simulatePairingData(identifyData, from: companion.centralID)
+    try await Task.sleep(nanoseconds: 200_000_000)
+
+    async let authResult = coordinator.authenticateFromPAM(
+        user: "arun", service: "sudo", pid: 1234, timeout: 5.0
+    )
+
+    try await Task.sleep(nanoseconds: 150_000_000)
+    guard let sent = bleServer.sentChallenges.last else {
+        Issue.record("No challenge was sent after recovery identify")
+        return
+    }
+    #expect(sent.centralID == companion.centralID)
+
+    let response = try companion.respondToChallenge(sent.data)
+    bleServer.simulateResponse(response, from: companion.centralID)
+
+    let result = await authResult
+    #expect(result.success == true)
 }
 
 @Test func disconnectClearsSession() async throws {
