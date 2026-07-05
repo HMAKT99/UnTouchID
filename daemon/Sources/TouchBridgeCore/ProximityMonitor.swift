@@ -17,6 +17,7 @@ public final class ProximityMonitor: @unchecked Sendable {
     private var disconnectTimer: DispatchWorkItem?
     private var lastConnectedState: Bool = true
     private let queue = DispatchQueue(label: "dev.touchbridge.proximity")
+    private let lockAction: () -> Void
 
     /// Callback when the Mac should be locked.
     public var onShouldLock: (() -> Void)?
@@ -26,9 +27,18 @@ public final class ProximityMonitor: @unchecked Sendable {
     /// - Parameters:
     ///   - rssiThreshold: Lock when average RSSI drops below this (default -80 dBm)
     ///   - disconnectDelay: Wait this long after disconnect before locking (default 30s)
-    public init(rssiThreshold: Int = -80, disconnectDelay: TimeInterval = 30) {
+    public convenience init(rssiThreshold: Int = -80, disconnectDelay: TimeInterval = 30) {
+        self.init(
+            rssiThreshold: rssiThreshold,
+            disconnectDelay: disconnectDelay,
+            lockAction: ProximityMonitor.systemDisplaySleep
+        )
+    }
+
+    init(rssiThreshold: Int, disconnectDelay: TimeInterval, lockAction: @escaping () -> Void) {
         self.rssiThreshold = rssiThreshold
         self.disconnectDelay = disconnectDelay
+        self.lockAction = lockAction
     }
 
     /// Enable proximity-based auto-lock.
@@ -83,7 +93,11 @@ public final class ProximityMonitor: @unchecked Sendable {
     private func lockScreen() {
         onShouldLock?()
 
-        // Use the system command to lock the screen
+        lockAction()
+        logger.info("Screen lock action completed")
+    }
+
+    private static func systemDisplaySleep() {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
         process.arguments = ["displaysleepnow"]
@@ -91,9 +105,9 @@ public final class ProximityMonitor: @unchecked Sendable {
         do {
             try process.run()
             process.waitUntilExit()
-            logger.info("Screen locked via pmset")
         } catch {
-            logger.error("Failed to lock screen: \(error.localizedDescription)")
+            Logger(subsystem: "dev.touchbridge", category: "ProximityMonitor")
+                .error("Failed to lock screen: \(error.localizedDescription)")
         }
     }
 

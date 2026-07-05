@@ -17,6 +17,9 @@ public protocol BLEClientDelegate: AnyObject {
 
     /// Pairing data received from Mac.
     func bleClient(_ client: BLEClient, didReceivePairingData data: Data, from peripheralID: UUID)
+
+    /// Service discovery and notification setup completed; safe to begin ECDH writes.
+    func bleClientDidBecomeReadyForSecureSession(_ client: BLEClient, peripheralID: UUID)
 }
 
 // MARK: - Discovered Peripheral Tracking
@@ -67,6 +70,10 @@ public class BLEClient: NSObject {
     private var challengeChar: CBCharacteristic?
     private var responseChar: CBCharacteristic?
     private var pairingChar: CBCharacteristic?
+    private var pendingNotifyCharacteristics: Set<CBUUID> = []
+    private var didNotifyReady = false
+    private var shouldScanWhenReady = false
+    private var isConnecting = false
 
     public weak var delegate: BLEClientDelegate?
 
@@ -102,8 +109,15 @@ public class BLEClient: NSObject {
 
     /// Start scanning for TouchBridge Mac peripherals.
     public func startScanning() {
-        guard isReady, !isScanning else {
-            logger.warning("Cannot scan: ready=\(self.isReady), scanning=\(self.isScanning)")
+        shouldScanWhenReady = true
+
+        guard isReady else {
+            logger.info("Deferring scan until Bluetooth is powered on")
+            return
+        }
+
+        guard !isScanning, !isConnecting, connectedPeripheral == nil else {
+            logger.warning("Cannot scan: scanning=\(self.isScanning), connecting=\(self.isConnecting), connected=\(self.connectedPeripheral != nil)")
             return
         }
 
@@ -118,6 +132,7 @@ public class BLEClient: NSObject {
 
     /// Stop scanning.
     public func stopScanning() {
+        shouldScanWhenReady = false
         guard isScanning else { return }
         centralManager.stopScan()
         isScanning = false
@@ -131,9 +146,29 @@ public class BLEClient: NSObject {
             return
         }
 
-        stopScanning()
+        if isScanning {
+            centralManager.stopScan()
+            isScanning = false
+        }
+        isConnecting = true
         centralManager.connect(info.peripheral, options: nil)
         logger.info("Connecting to peripheral \(peripheralID)")
+    }
+
+    /// Drop any restored/stale CoreBluetooth connection and start a clean scan.
+    public func resetConnectionAndScan() {
+        shouldScanWhenReady = true
+        isConnecting = false
+        clearConnectionState()
+
+        if let peripheral = connectedPeripheral {
+            centralManager.cancelPeripheralConnection(peripheral)
+            connectedPeripheral = nil
+        }
+
+        if isReady {
+            startScanning()
+        }
     }
 
     /// Disconnect from the currently connected peripheral.
@@ -192,20 +227,49 @@ public class BLEClient: NSObject {
     // MARK: - Private
 
     private func discoverServices(for peripheral: CBPeripheral) {
+        clearConnectionState()
         peripheral.delegate = self
         peripheral.discoverServices([CBUUID(string: serviceUUID)])
     }
 
     private func subscribeToNotifications(for peripheral: CBPeripheral) {
+        pendingNotifyCharacteristics.removeAll()
+        didNotifyReady = false
+
         if let char = challengeChar {
+            pendingNotifyCharacteristics.insert(char.uuid)
             peripheral.setNotifyValue(true, for: char)
         }
         if let char = sessionKeyChar, char.properties.contains(.notify) {
+            pendingNotifyCharacteristics.insert(char.uuid)
             peripheral.setNotifyValue(true, for: char)
         }
         if let char = pairingChar, char.properties.contains(.notify) {
+            pendingNotifyCharacteristics.insert(char.uuid)
             peripheral.setNotifyValue(true, for: char)
         }
+
+        notifyReadyIfPossible(peripheralID: peripheral.identifier)
+    }
+
+    private func clearConnectionState() {
+        sessionKeyChar = nil
+        challengeChar = nil
+        responseChar = nil
+        pairingChar = nil
+        pendingNotifyCharacteristics.removeAll()
+        didNotifyReady = false
+    }
+
+    private func notifyReadyIfPossible(peripheralID: UUID) {
+        guard !didNotifyReady,
+              sessionKeyChar != nil,
+              responseChar != nil,
+              pairingChar != nil,
+              pendingNotifyCharacteristics.isEmpty else { return }
+
+        didNotifyReady = true
+        delegate?.bleClientDidBecomeReadyForSecureSession(self, peripheralID: peripheralID)
     }
 }
 
@@ -218,10 +282,14 @@ extension BLEClient: CBCentralManagerDelegate {
         case .poweredOn:
             logger.info("Bluetooth powered on")
             isReady = true
+            if shouldScanWhenReady {
+                startScanning()
+            }
         case .poweredOff:
             logger.warning("Bluetooth powered off")
             isReady = false
             isScanning = false
+            isConnecting = false
         case .unauthorized:
             logger.error("Bluetooth unauthorized — check Info.plist NSBluetoothAlwaysUsageDescription")
             isReady = false
@@ -243,8 +311,8 @@ extension BLEClient: CBCentralManagerDelegate {
                 logger.info("Restoring peripheral: \(peripheral.identifier)")
                 discoveredPeripherals[peripheral.identifier] = DiscoveredPeripheral(peripheral: peripheral)
                 if peripheral.state == .connected {
-                    connectedPeripheral = peripheral
-                    discoverServices(for: peripheral)
+                    centralManager.cancelPeripheralConnection(peripheral)
+                    shouldScanWhenReady = true
                 }
             }
         }
@@ -264,6 +332,10 @@ extension BLEClient: CBCentralManagerDelegate {
             logger.info("Discovered TouchBridge peripheral: \(id), RSSI: \(rssiValue)")
         }
         discoveredPeripherals[id]?.addRSSI(rssiValue)
+
+        if shouldScanWhenReady, connectedPeripheral == nil, !isConnecting {
+            connect(to: id)
+        }
     }
 
     public func centralManager(
@@ -272,6 +344,7 @@ extension BLEClient: CBCentralManagerDelegate {
     ) {
         let id = peripheral.identifier
         logger.info("Connected to peripheral: \(id)")
+        isConnecting = false
         connectedPeripheral = peripheral
         discoverServices(for: peripheral)
         delegate?.bleClient(self, connectionStateChanged: true, peripheralID: id)
@@ -283,8 +356,12 @@ extension BLEClient: CBCentralManagerDelegate {
         error: Error?
     ) {
         logger.error("Failed to connect: \(error?.localizedDescription ?? "unknown")")
+        isConnecting = false
         if connectedPeripheral?.identifier == peripheral.identifier {
             connectedPeripheral = nil
+        }
+        if shouldScanWhenReady {
+            startScanning()
         }
         delegate?.bleClient(self, connectionStateChanged: false, peripheralID: peripheral.identifier)
     }
@@ -298,10 +375,11 @@ extension BLEClient: CBCentralManagerDelegate {
         logger.info("Disconnected from peripheral: \(id)")
         if connectedPeripheral?.identifier == id {
             connectedPeripheral = nil
-            sessionKeyChar = nil
-            challengeChar = nil
-            responseChar = nil
-            pairingChar = nil
+            clearConnectionState()
+        }
+        isConnecting = false
+        if shouldScanWhenReady {
+            startScanning()
         }
         delegate?.bleClient(self, connectionStateChanged: false, peripheralID: id)
     }
@@ -416,6 +494,10 @@ extension BLEClient: CBPeripheralDelegate {
             logger.error("Notification state error for \(characteristic.uuid): \(error.localizedDescription)")
         } else {
             logger.info("Notifications \(characteristic.isNotifying ? "enabled" : "disabled") for \(characteristic.uuid)")
+            if characteristic.isNotifying {
+                pendingNotifyCharacteristics.remove(characteristic.uuid)
+                notifyReadyIfPossible(peripheralID: peripheral.identifier)
+            }
         }
     }
 }
