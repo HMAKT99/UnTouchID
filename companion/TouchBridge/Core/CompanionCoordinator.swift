@@ -309,6 +309,13 @@ extension CompanionCoordinator: BLEClientDelegate {
     public func bleClientDidBecomeReadyForSecureSession(_ client: BLEClient, peripheralID: UUID) {
         logger.info("BLE session is ready; starting ECDH for \(peripheralID)")
         performECDHKeyExchange()
+
+        // If a pairing session is active, send the pair request now — the
+        // characteristics are guaranteed discovered at this point, unlike on
+        // the raw connect event.
+        if pendingPairingToken != nil {
+            sendPairingRequest(macName: pendingMacName ?? "Mac")
+        }
     }
 
     public func bleClient(_ client: BLEClient, didReceiveChallenge data: Data, from peripheralID: UUID) {

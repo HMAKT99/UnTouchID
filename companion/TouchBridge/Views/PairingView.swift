@@ -150,11 +150,12 @@ struct PairingView: View {
         pairingStatus = .connecting
         appState.coordinator.connect(to: peripheralID)
 
-        // After connection, send pairing request
+        // The coordinator sends the pairing request itself once BLE
+        // characteristics are ready — sending on raw connect would race
+        // service discovery and be dropped.
         appState.coordinator.onConnectionChanged = { connected in
             if connected {
                 pairingStatus = .exchangingKeys
-                appState.coordinator.sendPairingRequest(macName: "Mac")
             }
         }
     }
