@@ -109,6 +109,15 @@ public final class CompanionCoordinator: NSObject, @unchecked Sendable {
         logger.info("Started scanning for Mac")
     }
 
+    /// Force a fresh BLE handshake with the paired Mac.
+    public func resetConnectionAndScan() {
+        sessionCrypto = nil
+        ephemeralPrivateKey = nil
+        challengeHandler.sessionCrypto = nil
+        bleClient.resetConnectionAndScan()
+        logger.info("Reset BLE connection and restarted scanning")
+    }
+
     /// Connect to a discovered Mac peripheral.
     public func connect(to peripheralID: UUID) {
         bleClient.connect(to: peripheralID)
@@ -285,10 +294,7 @@ extension CompanionCoordinator: BLEClientDelegate {
         logger.info("Connection state: \(connected) for \(peripheralID)")
 
         if connected {
-            // Initiate ECDH key exchange
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.performECDHKeyExchange()
-            }
+            logger.info("Connected; waiting for BLE characteristics before ECDH")
         } else {
             sessionCrypto = nil
             ephemeralPrivateKey = nil
@@ -297,6 +303,18 @@ extension CompanionCoordinator: BLEClientDelegate {
 
         DispatchQueue.main.async {
             self.onConnectionChanged?(connected)
+        }
+    }
+
+    public func bleClientDidBecomeReadyForSecureSession(_ client: BLEClient, peripheralID: UUID) {
+        logger.info("BLE session is ready; starting ECDH for \(peripheralID)")
+        performECDHKeyExchange()
+
+        // If a pairing session is active, send the pair request now — the
+        // characteristics are guaranteed discovered at this point, unlike on
+        // the raw connect event.
+        if pendingPairingToken != nil {
+            sendPairingRequest(macName: pendingMacName ?? "Mac")
         }
     }
 
