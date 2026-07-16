@@ -25,6 +25,25 @@ If you discover a security vulnerability in TouchBridge, please report it respon
 - **Sandboxed third-party apps calling `LAContext`**: Blocked by SIP and sandbox
 - **Compromised macOS kernel**: If the kernel is compromised, no user-space security holds
 
+### Availability note: PAM fallback vs. a dangling module reference
+
+TouchBridge installs `pam_touchbridge.so` as `auth sufficient`, so if the daemon
+is down or the phone is unreachable, PAM falls through to your password — you are
+never locked out by a *failed* authentication.
+
+There is one exception, and it is an **availability** issue, not an
+authentication bypass: if the module *file* is deleted while `/etc/pam.d/sudo`
+still references it, `sudo` cannot initialize PAM and refuses to run entirely.
+The `sufficient` flag only falls through when the module loads and returns
+failure — a missing module file is a hard failure. Our installer and uninstaller
+always remove the `/etc/pam.d` reference **before** removing the module to avoid
+this. If you ever hit `sudo: unable to initialize PAM: No such file or directory`,
+recover without needing sudo (GUI admin auth uses a different PAM stack):
+
+```bash
+osascript -e 'do shell script "grep -v pam_touchbridge /etc/pam.d/sudo > /tmp/s && cp /tmp/s /etc/pam.d/sudo && rm /tmp/s" with administrator privileges'
+```
+
 ### Cryptographic properties
 
 | Property | Implementation |
