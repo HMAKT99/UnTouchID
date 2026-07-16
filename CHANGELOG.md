@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.1.1] — 2026-07-16
+
+### Fixed
+- **sudo lockout on uninstall/upgrade** (#23): the Homebrew cask deleted the
+  PAM module while leaving the `/etc/pam.d/sudo` reference, which made `sudo`
+  unable to initialize PAM. Uninstall now restores the pam.d backup (or strips
+  our line) before removing the module. Fixed the `depends_on macos:`
+  deprecation warning.
+- **BLE re-identify recovery on real devices** (#28, #29): restored
+  CoreBluetooth connections are reconnected cleanly instead of reused with
+  stale state; ECDH now starts only after service/characteristic readiness
+  (replaces a fragile fixed delay); the daemon recovers a session when a
+  session key arrives before the connect event. Pairing requests are sent from
+  the same readiness gate. Thanks to @Souitou-iop for the fixes and the first
+  real-iPhone verification.
+- `ProximityMonitor` takes an injectable lock action so tests no longer sleep
+  the developer's display.
+
+### Security
+- SECURITY.md documents the missing-module PAM availability failure mode and a
+  recovery that works without sudo.
+
 ## [1.1.0] — 2026-07-04
 
 ### Pairing Security
