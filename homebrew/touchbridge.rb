@@ -1,6 +1,6 @@
 cask "touchbridge" do
-  version "1.1.1"
-  sha256 "74fc21e24959280ddb2d830a5e55d66d3d23ba65cf4aee8ad8f0b623d6ac6daf"
+  version "1.1.2"
+  sha256 "da7af193723ad1d5ffd4739033c440916e9175183dc82e70899c0bcbbbf4b1e9"
 
   url "https://github.com/HMAKT99/UnTouchID/releases/download/v#{version}/TouchBridge-#{version}.pkg"
   name "TouchBridge"
