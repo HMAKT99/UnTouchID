@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.1.2] — 2026-07-17
+
+### Changed
+- **PAM hook now uses `/etc/pam.d/sudo_local` on macOS Sonoma+** (#23): Apple's
+  sanctioned, unprotected include for local sudo PAM changes. This avoids editing
+  the SIP-protected `/etc/pam.d/sudo` entirely — so activation can't fail with
+  "Operation not permitted", removal is always possible (no Recovery Mode needed),
+  and the hook survives macOS updates that reset `/etc/pam.d/sudo`. Older macOS
+  without the `sudo_local` include falls back to editing `/etc/pam.d/sudo`
+  directly, as before.
+- Install/activate/uninstall PAM logic is unified in `scripts/pam-common.sh`;
+  uninstall removes the hook before the module in all cases, including the new
+  `sudo_local` path and the Homebrew cask.
+
+### Docs
+- setup.md and SECURITY.md document the `sudo_local` mechanism and a recovery
+  path that works even when `/etc/pam.d/sudo` is protected.
+
 ## [1.1.1] — 2026-07-16
 
 ### Fixed

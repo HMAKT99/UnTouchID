@@ -2,7 +2,14 @@
 set -euo pipefail
 
 # TouchBridge Uninstaller
-# Removes the daemon, PAM module, and restores PAM config files from backups.
+# Removes the daemon, PAM module, and the TouchBridge PAM hook.
+#
+# IMPORTANT: the PAM hook is always removed BEFORE the module file, so sudo can
+# never be left referencing a deleted module (the lockout class of bugs).
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=pam-common.sh
+source "$SCRIPT_DIR/pam-common.sh"
 
 DAEMON_BIN="/usr/local/bin/touchbridged"
 PAM_LIB="/usr/local/lib/pam/pam_touchbridge.so"
@@ -45,32 +52,10 @@ else
     info "LaunchAgent plist not found — skipping."
 fi
 
-# --- Restore PAM Files ---
+# --- Remove PAM hook (BEFORE the module, to avoid a dangling reference) ---
 
-restore_pam_file() {
-    local PAM_FILE="$1"
-    local PAM_NAME="$2"
-    local BACKUP="${PAM_FILE}.touchbridge-backup"
-
-    if [ -f "$BACKUP" ]; then
-        cp "$BACKUP" "$PAM_FILE"
-        rm -f "$BACKUP"
-        info "Restored $PAM_FILE from backup."
-    elif grep -q "pam_touchbridge" "$PAM_FILE" 2>/dev/null; then
-        # No backup but file is patched — remove the touchbridge line
-        local TEMP_FILE
-        TEMP_FILE=$(mktemp)
-        grep -v "pam_touchbridge" "$PAM_FILE" > "$TEMP_FILE"
-        cp "$TEMP_FILE" "$PAM_FILE"
-        rm -f "$TEMP_FILE"
-        info "Removed pam_touchbridge line from $PAM_FILE."
-    else
-        info "$PAM_NAME not patched — skipping."
-    fi
-}
-
-restore_pam_file "/etc/pam.d/sudo" "sudo"
-restore_pam_file "/etc/pam.d/screensaver" "screensaver"
+tb_disable_sudo
+tb_disable_screensaver
 
 # --- Remove Binaries ---
 

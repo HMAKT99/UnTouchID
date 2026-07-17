@@ -11,13 +11,15 @@ cask "touchbridge" do
 
   pkg "TouchBridge-#{version}.pkg"
 
-  # IMPORTANT: strip the pam_touchbridge line from /etc/pam.d before removing the
-  # module. Deleting the .so while /etc/pam.d/sudo still references it makes sudo
-  # unable to initialize PAM — a full sudo lockout. Restore from the backup if the
-  # installer left one, otherwise remove just our line. Only then remove binaries.
+  # IMPORTANT: remove the pam_touchbridge hook BEFORE deleting the module.
+  # Deleting the .so while /etc/pam.d still references it makes sudo unable to
+  # initialize PAM — a full sudo lockout. Handle all three hook locations:
+  # /etc/pam.d/sudo_local (Sonoma+, unprotected), and legacy direct edits of
+  # /etc/pam.d/sudo and /etc/pam.d/screensaver (restore backup or strip line).
+  # Only then remove binaries.
   uninstall script: {
               executable: "/bin/bash",
-              args:       ["-c", "for f in /etc/pam.d/sudo /etc/pam.d/screensaver; do b=\"$f.touchbridge-backup\"; if [ -f \"$b\" ]; then cp \"$b\" \"$f\"; rm -f \"$b\"; elif grep -q pam_touchbridge \"$f\" 2>/dev/null; then t=$(mktemp); grep -v pam_touchbridge \"$f\" > \"$t\"; cat \"$t\" > \"$f\"; rm -f \"$t\"; fi; done; launchctl bootout gui/$(id -u)/dev.touchbridge.daemon 2>/dev/null; rm -f /usr/local/bin/touchbridged /usr/local/bin/touchbridge-test /usr/local/bin/touchbridge-nmh /usr/local/lib/pam/pam_touchbridge.so ~/Library/LaunchAgents/dev.touchbridge.daemon.plist"],
+              args:       ["-c", "for f in /etc/pam.d/sudo /etc/pam.d/screensaver; do b=\"$f.touchbridge-backup\"; if [ -f \"$b\" ]; then cp \"$b\" \"$f\"; rm -f \"$b\"; elif grep -q pam_touchbridge \"$f\" 2>/dev/null; then t=$(mktemp); grep -v pam_touchbridge \"$f\" > \"$t\"; cat \"$t\" > \"$f\"; rm -f \"$t\"; fi; done; sl=/etc/pam.d/sudo_local; if [ -f \"$sl\" ] && grep -q pam_touchbridge \"$sl\"; then t=$(mktemp); grep -v pam_touchbridge \"$sl\" > \"$t\" || true; if grep -qE '[^[:space:]]' \"$t\"; then cat \"$t\" > \"$sl\"; else rm -f \"$sl\"; fi; rm -f \"$t\"; fi; launchctl bootout gui/$(id -u)/dev.touchbridge.daemon 2>/dev/null; rm -f /usr/local/bin/touchbridged /usr/local/bin/touchbridge-test /usr/local/bin/touchbridge-nmh /usr/local/lib/pam/pam_touchbridge.so ~/Library/LaunchAgents/dev.touchbridge.daemon.plist"],
               sudo:       true,
             }
 

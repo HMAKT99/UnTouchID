@@ -73,6 +73,7 @@ cp "$BUILD_DIR/pam_touchbridge.so" "$PKG_ROOT/usr/local/lib/pam/"
 cp "$PROJECT_DIR/scripts/install.sh" "$PKG_ROOT/usr/local/share/touchbridge/"
 cp "$PROJECT_DIR/scripts/uninstall.sh" "$PKG_ROOT/usr/local/share/touchbridge/"
 cp "$PROJECT_DIR/scripts/patch-pam.sh" "$PKG_ROOT/usr/local/share/touchbridge/"
+cp "$PROJECT_DIR/scripts/pam-common.sh" "$PKG_ROOT/usr/local/share/touchbridge/"
 cp "$PROJECT_DIR/daemon/dev.touchbridge.daemon.plist" "$PKG_ROOT/usr/local/share/touchbridge/"
 
 # Post-install script
