@@ -32,16 +32,30 @@ is down or the phone is unreachable, PAM falls through to your password — you 
 never locked out by a *failed* authentication.
 
 There is one exception, and it is an **availability** issue, not an
-authentication bypass: if the module *file* is deleted while `/etc/pam.d/sudo`
-still references it, `sudo` cannot initialize PAM and refuses to run entirely.
-The `sufficient` flag only falls through when the module loads and returns
-failure — a missing module file is a hard failure. Our installer and uninstaller
-always remove the `/etc/pam.d` reference **before** removing the module to avoid
-this. If you ever hit `sudo: unable to initialize PAM: No such file or directory`,
-recover without needing sudo (GUI admin auth uses a different PAM stack):
+authentication bypass: if the module *file* is deleted while a PAM config still
+references it, `sudo` cannot initialize PAM and refuses to run entirely. The
+`sufficient` flag only falls through when the module loads and returns failure —
+a missing module file is a hard failure.
+
+To avoid this, on macOS Sonoma+ we install the hook into the unprotected
+`/etc/pam.d/sudo_local` (Apple's sanctioned include) rather than the SIP-protected
+`/etc/pam.d/sudo`, and our uninstaller always removes the hook **before** the
+module. If you ever hit `sudo: unable to initialize PAM: No such file or
+directory`, recover without needing sudo (GUI admin auth uses a different PAM
+stack):
 
 ```bash
-osascript -e 'do shell script "grep -v pam_touchbridge /etc/pam.d/sudo > /tmp/s && cp /tmp/s /etc/pam.d/sudo && rm /tmp/s" with administrator privileges'
+# Sonoma+ (hook in sudo_local — just delete it):
+osascript -e 'do shell script "rm -f /etc/pam.d/sudo_local" with administrator privileges'
+```
+
+If `/etc/pam.d/sudo` itself is protected on your system and the hook was written
+there by an older version, the most reliable fix is to restore the module so the
+reference resolves again — download the latest `.pkg`, then:
+
+```bash
+pkgutil --expand-full TouchBridge-*.pkg /tmp/tb-x
+osascript -e 'do shell script "cp /tmp/tb-x/Payload/usr/local/lib/pam/pam_touchbridge.so /usr/local/lib/pam/" with administrator privileges'
 ```
 
 ### Cryptographic properties

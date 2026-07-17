@@ -72,10 +72,16 @@ The installer places the binaries but you need to activate the PAM hook. Run onc
 sudo bash /usr/local/share/touchbridge/patch-pam.sh
 ```
 
-If that file doesn't exist (installs from v1.0.0 or earlier), fetch it from the repo first:
+On macOS Sonoma and later this activates the hook via `/etc/pam.d/sudo_local`
+(Apple's sanctioned, unprotected include) rather than editing the protected
+`/etc/pam.d/sudo` — so it can't lock you out and it survives macOS updates.
+
+If that file doesn't exist (installs from v1.0.0 or earlier), fetch it and its
+helper from the repo first:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/HMAKT99/UnTouchID/main/scripts/patch-pam.sh
+curl -fsSLO https://raw.githubusercontent.com/HMAKT99/UnTouchID/main/scripts/pam-common.sh
 sudo bash patch-pam.sh
 ```
 
@@ -126,8 +132,8 @@ which touchbridged
 file /usr/local/lib/pam/pam_touchbridge.so
 # → Mach-O universal binary with 2 architectures: [x86_64] [arm64]
 
-# PAM is patched
-head -3 /etc/pam.d/sudo
+# PAM hook is active (Sonoma+: in sudo_local; older macOS: in sudo)
+grep -r pam_touchbridge /etc/pam.d/sudo_local /etc/pam.d/sudo 2>/dev/null
 # → auth       sufficient     pam_touchbridge.so
 
 # Daemon is running
@@ -461,15 +467,15 @@ If missing, the daemon may have crashed. Check the log:
 tail -20 ~/Library/Logs/TouchBridge/daemon.stderr.log
 ```
 
-**3. Check PAM is patched:**
+**3. Check the PAM hook is active:**
 ```bash
-head -3 /etc/pam.d/sudo
+grep -r pam_touchbridge /etc/pam.d/sudo_local /etc/pam.d/sudo 2>/dev/null
 ```
-The first line should be:
+You should see (on Sonoma+ it lives in `sudo_local`; on older macOS, in `sudo`):
 ```
 auth       sufficient     pam_touchbridge.so
 ```
-If it isn't, re-run the installer: `sudo bash scripts/install.sh`
+If nothing prints, re-run: `sudo bash /usr/local/share/touchbridge/patch-pam.sh`
 
 **4. Check recent auth events:**
 ```bash
@@ -527,9 +533,19 @@ sudo chmod 444 /usr/local/lib/pam/pam_touchbridge.so
 
 ### macOS update broke `sudo`
 
-macOS updates sometimes reset `/etc/pam.d/sudo`. Re-run the installer — it's safe to run again:
+On Sonoma and later the hook lives in `/etc/pam.d/sudo_local`, which macOS
+updates leave alone — so this is mostly a non-issue now. If auth stops working
+after an update, re-activate the hook (safe to run again):
 ```bash
-sudo bash scripts/install.sh
+sudo bash /usr/local/share/touchbridge/patch-pam.sh
+```
+
+If you ever see `sudo: unable to initialize PAM: No such file or directory`,
+the module file is missing while a hook still references it. Recover without
+needing sudo (GUI admin auth uses a different PAM stack):
+```bash
+# Remove the sudo_local hook (Sonoma+):
+osascript -e 'do shell script "rm -f /etc/pam.d/sudo_local" with administrator privileges'
 ```
 
 ---
@@ -542,7 +558,9 @@ sudo bash scripts/uninstall.sh
 
 This:
 1. Stops the daemon and removes the LaunchAgent
-2. Restores `/etc/pam.d/sudo` and `/etc/pam.d/screensaver` from backups
+2. Removes the PAM hook (deletes `sudo_local`, or restores `sudo`/`screensaver`
+   from backups) **before** removing the module — so `sudo` is never left
+   pointing at a deleted module
 3. Removes `/usr/local/bin/touchbridged` and the PAM module
 
 Your Mac returns to normal password-only authentication immediately.

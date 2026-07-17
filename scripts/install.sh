@@ -106,74 +106,14 @@ sudo -u "$ACTUAL_USER" mkdir -p "$LOG_DIR"
 info "Created application support and log directories."
 
 # --- Patch PAM Files ---
+# Uses the shared helper: prefers the unprotected /etc/pam.d/sudo_local hook on
+# macOS Sonoma+, falls back to editing /etc/pam.d/sudo directly on older macOS.
 
-patch_pam_file() {
-    local PAM_FILE="$1"
-    local PAM_NAME="$2"
-    local BACKUP="${PAM_FILE}.touchbridge-backup"
+# shellcheck source=pam-common.sh
+source "$SCRIPT_DIR/pam-common.sh"
 
-    if [ ! -f "$PAM_FILE" ]; then
-        warn "$PAM_FILE does not exist — skipping."
-        return
-    fi
-
-    # Check if already patched (idempotent)
-    if grep -q "pam_touchbridge" "$PAM_FILE"; then
-        info "$PAM_NAME already patched — skipping."
-        return
-    fi
-
-    # Create backup
-    if [ ! -f "$BACKUP" ]; then
-        cp "$PAM_FILE" "$BACKUP"
-        info "Backed up $PAM_FILE to $BACKUP"
-    fi
-
-    # Show the user what will change
-    echo ""
-    echo "--- Proposed change to $PAM_FILE ---"
-    echo "Adding as first auth line:"
-    echo "  auth       sufficient     pam_touchbridge.so"
-    echo ""
-    echo "Current contents:"
-    cat "$PAM_FILE"
-    echo "---"
-    echo ""
-
-    read -p "Apply this change to $PAM_FILE? [y/N] " -n 1 -r
-    echo ""
-
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        warn "Skipped patching $PAM_FILE."
-        return
-    fi
-
-    # Insert pam_touchbridge as the first auth line
-    # Strategy: find the first line starting with "auth" and insert before it
-    local TEMP_FILE
-    TEMP_FILE=$(mktemp)
-    local INSERTED=0
-
-    while IFS= read -r line; do
-        if [ $INSERTED -eq 0 ] && echo "$line" | grep -q "^auth"; then
-            echo "auth       sufficient     pam_touchbridge.so" >> "$TEMP_FILE"
-            INSERTED=1
-        fi
-        echo "$line" >> "$TEMP_FILE"
-    done < "$PAM_FILE"
-
-    if [ $INSERTED -eq 0 ]; then
-        # No auth line found — append at the end
-        echo "auth       sufficient     pam_touchbridge.so" >> "$TEMP_FILE"
-    fi
-
-    cp "$TEMP_FILE" "$PAM_FILE"
-    rm -f "$TEMP_FILE"
-    info "Patched $PAM_FILE"
-}
-
-patch_pam_file "/etc/pam.d/sudo" "sudo"
-patch_pam_file "/etc/pam.d/screensaver" "screensaver"
+tb_enable_sudo "prompt"
+tb_enable_screensaver "prompt"
 
 # --- Install LaunchAgent ---
 
