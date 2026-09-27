@@ -245,7 +245,12 @@ public final class CompanionCoordinator: NSObject, @unchecked Sendable {
         pendingPairingToken = token
         pendingMacName = macName
         bleClient.serviceUUID = serviceUUID
-        startScanning()
+        // A prior pairing attempt (e.g. with stale/expired data) may have left
+        // BLEClient mid-scan or mid-connect for a *different* service UUID.
+        // startScanning() alone is a no-op while isScanning is already true,
+        // so the old UUID would keep being scanned forever. Force a clean
+        // stop + reset before scanning for the new one.
+        bleClient.resetConnectionAndScan()
         logger.info("Pairing session started for \(macName)")
     }
 
