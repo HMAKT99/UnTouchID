@@ -4,550 +4,329 @@ import CryptoKit
 import OSLog
 import TouchBridgeProtocol
 
-/// Coordinates all daemon components: BLE server, challenge management,
-/// pairing, session crypto, and audit logging.
-///
-/// This is the central integration point that wires events from the BLE layer
-/// to the crypto and storage layers.
-public final class DaemonCoordinator: NSObject, PAMAuthHandler, @unchecked Sendable {
-    private let logger = Logger(subsystem: "dev.touchbridge", category: "Coordinator")
-
-    // Components
+public final class DaemonCoordinator: NSObject, PAMAuthHandler, PAMProofAuthHandler, @unchecked Sendable {
     public let bleServer: any BLEServerInterface
     public let challengeManager: ChallengeManager
     public let pairingManager: PairingManager
     public let keychainStore: KeychainStore
     public let auditLog: AuditLog
-
-    /// Guards `sessions` and `pendingAuthentications` — both are mutated from
-    /// CoreBluetooth delegate callbacks, detached Tasks, and PAM auth calls,
-    /// which run on different threads.
     private let stateLock = NSLock()
-
-    // Per-central session state (access only while holding stateLock)
+    private let serviceUUID: String
     private var sessions: [UUID: SessionState] = [:]
-
-    /// Pending PAM authentications awaiting challenge results.
-    /// Each auth broadcast stores the same OnceContinuation under multiple challenge IDs
-    /// (one per device), so the first valid response wins and subsequent responses are no-ops.
-    /// (access only while holding stateLock)
-    private var pendingAuthentications: [UUID: OnceContinuation] = [:]
-
-    /// Periodic maintenance task pruning expired challenges and replay nonces.
+    private var pending: [UUID: Pending] = [:]
     private var pruneTask: Task<Void, Never>?
-
-    /// Callback invoked when a challenge is verified or fails.
+    private var presenceTask: Task<Void, Never>?
+    private let presenceQueue = DispatchQueue(label: "dev.touchbridge.verified-presence")
+    private var presenceCallback: ((Int) -> Void)?
+    private let presenceNow: @Sendable () -> TimeInterval
+    private let presenceLease: TimeInterval
+    private let heartbeatInterval: TimeInterval
     public var onChallengeResult: ((UUID, ChallengeResult, String?) -> Void)?
-
-    /// Callback invoked when pairing completes.
     public var onPairingComplete: ((PairedDevice) -> Void)?
-
+    public var onVerifiedCompanionCountChanged: ((Int) -> Void)? {
+        get { stateLock.withLock { presenceCallback } }
+        set { stateLock.withLock { presenceCallback = newValue; publishPresenceLocked() } }
+    }
+    public var verifiedCompanionCount: Int { identifiedCentrals.count }
     private struct SessionState {
-        var ephemeralPrivateKey: P256.KeyAgreement.PrivateKey?
-        var sessionCrypto: SessionCrypto?
+        let id = UUID()
+        let crypto: SessionCrypto
+        let transcript: Data
         var deviceID: String?
+        var presenceDeadline: TimeInterval = 0
+        var nextHeartbeatAt: TimeInterval = 0
+        var pendingHeartbeatNonce: Data?
     }
-
-    public init(
-        keychainStore: KeychainStore = KeychainStore(),
-        auditLog: AuditLog = AuditLog(),
-        challengeManager: ChallengeManager = ChallengeManager(),
-        pairingManager: PairingManager? = nil,
-        rssiThreshold: Int = TouchBridgeConstants.defaultRSSIThreshold,
-        serviceUUID: String = TouchBridgeConstants.serviceUUID,
-        bleServer: (any BLEServerInterface)? = nil
-    ) {
-        self.keychainStore = keychainStore
-        self.auditLog = auditLog
-        self.challengeManager = challengeManager
+    private struct Pending { let centralID: UUID; let sessionID: UUID; let deviceID: String; let waiter: ProofWaiter? }
+    public init(keychainStore: KeychainStore = KeychainStore(), auditLog: AuditLog = AuditLog(), challengeManager: ChallengeManager = ChallengeManager(), pairingManager: PairingManager? = nil, rssiThreshold: Int = TouchBridgeConstants.defaultRSSIThreshold, serviceUUID: String = TouchBridgeConstants.serviceUUID, bleServer: (any BLEServerInterface)? = nil, presenceLeaseSeconds: TimeInterval = 8, presenceHeartbeatInterval: TimeInterval = 2, presenceNow: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.presenceNow = presenceNow
+        self.presenceLease = presenceLeaseSeconds.isFinite ? min(max(2, presenceLeaseSeconds), 30) : 8
+        self.heartbeatInterval = presenceHeartbeatInterval.isFinite ? min(max(0.5, presenceHeartbeatInterval), self.presenceLease / 2) : 2
+        self.keychainStore = keychainStore; self.auditLog = auditLog; self.challengeManager = challengeManager; self.serviceUUID = serviceUUID
         self.bleServer = bleServer ?? BLEServer(rssiThreshold: rssiThreshold, serviceUUID: serviceUUID)
-
-        let pm = pairingManager ?? PairingManager(keychainStore: keychainStore, serviceUUID: serviceUUID)
-        self.pairingManager = pm
-
-        super.init()
-        self.bleServer.delegate = self
+        self.pairingManager = pairingManager ?? PairingManager(keychainStore: keychainStore, serviceUUID: serviceUUID)
+        super.init(); self.bleServer.delegate = self
     }
-
-    // MARK: - Public API
-
-    /// Start the daemon: begin advertising over BLE.
     public func start() {
-        logger.info("DaemonCoordinator starting")
-        // BLEServer will start advertising once Bluetooth is powered on
-        // (handled in peripheralManagerDidUpdateState via delegate)
-
-        // Unanswered challenges and replay nonces otherwise accumulate for the
-        // lifetime of the daemon — prune them periodically.
-        pruneTask?.cancel()
-        pruneTask = Task { [challengeManager] in
+        presenceTask?.cancel()
+        presenceTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 60_000_000_000)
-                await challengeManager.pruneExpired()
+                do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { break }
+                self?.maintainPresence()
             }
         }
-    }
-
-    /// Start advertising (call after BLE is ready).
-    public func startAdvertising() {
-        bleServer.startAdvertising()
-    }
-
-    /// Stop advertising and clean up.
-    public func stop() {
-        bleServer.stopAdvertising()
         pruneTask?.cancel()
-        pruneTask = nil
-        stateLock.withLock { sessions.removeAll() }
-        logger.info("DaemonCoordinator stopped")
-    }
-
-    /// Issue a challenge to a specific connected device.
-    ///
-    /// - Parameters:
-    ///   - centralID: The BLE central UUID of the connected companion.
-    ///   - reason: The reason string to show on the companion (e.g., "sudo").
-    /// - Returns: The challenge ID, or nil if sending failed.
-    public func issueChallenge(to centralID: UUID, reason: String) async -> UUID? {
-        let session = stateLock.withLock { sessions[centralID] }
-        guard let session,
-              let crypto = session.sessionCrypto,
-              let deviceID = session.deviceID else {
-            logger.warning("Cannot issue challenge: no session for central \(centralID)")
-            return nil
-        }
-
-        do {
-            let challenge = try await challengeManager.issue(for: deviceID)
-
-            // Encrypt nonce for wire transfer
-            let encryptedNonce = try crypto.encrypt(plaintext: challenge.nonce)
-
-            let msg = ChallengeIssuedMessage(
-                challengeID: challenge.id.uuidString,
-                encryptedNonce: encryptedNonce,
-                reason: reason,
-                expiryUnix: UInt64(challenge.expiresAt.timeIntervalSince1970)
-            )
-
-            let wireData = try WireFormat.encode(.challengeIssued, msg)
-            let sent = bleServer.sendChallenge(wireData, to: centralID)
-
-            if sent {
-                logger.info("Challenge \(challenge.id) issued to \(centralID)")
-                await auditLog.log(AuditEntry(
-                    sessionID: challenge.id.uuidString,
-                    surface: reason,
-                    result: "ISSUED",
-                    rssi: bleServer.averageRSSI(for: centralID)
-                ))
-                return challenge.id
-            } else {
-                logger.warning("Failed to send challenge over BLE")
-                return nil
-            }
-        } catch {
-            logger.error("Challenge issuance failed: \(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    /// Authenticate a PAM request by issuing challenges to all identified companion devices.
-    ///
-    /// Called by `SocketServer` when a PAM module connects.
-    /// Broadcasts to every connected, paired device simultaneously.
-    /// The first valid response wins — other challenges expire naturally.
-    /// Blocks until a response arrives or the timeout expires.
-    public func authenticateFromPAM(
-        user: String,
-        service: String,
-        pid: Int,
-        timeout: TimeInterval
-    ) async -> (success: Bool, reason: String?) {
-        // Only challenge sessions that have completed ECDH AND identified as a known paired device.
-        // Unknown/anonymous centrals (e.g. stranger's phone that happens to be nearby) are excluded.
-        let targets = stateLock.withLock {
-            sessions.filter { $0.value.sessionCrypto != nil && $0.value.deviceID != nil }.map(\.key)
-        }
-
-        guard !targets.isEmpty else {
-            logger.warning("PAM auth: no identified companion connected (ready=\(self.readyCentrals.count))")
-            await auditLog.log(AuditEntry(
-                sessionID: UUID().uuidString,
-                surface: "pam_\(service)",
-                requestingProcess: service,
-                deviceID: "",
-                result: "FAILED_NO_DEVICE"
-            ))
-            return (false, "no_companion_connected")
-        }
-
-        logger.info("PAM auth: broadcasting challenge to \(targets.count) device(s)")
-
-        // Race: first device response OR global timeout — whichever fires first wins.
-        //
-        // We use a single withCheckedContinuation + two unstructured Tasks (challenge dispatch
-        // and timeout) rather than withTaskGroup, because withTaskGroup waits for ALL child
-        // tasks to finish after the closure returns. That means if the timeout fires first,
-        // the group would hang indefinitely waiting for the challenge-dispatch task to return
-        // — which it never does because withCheckedContinuation only returns when resumed.
-        //
-        // With two unstructured Tasks sharing one OnceContinuation, the first resume wins;
-        // subsequent resumes (from late responses or cleanup) are silent no-ops.
-        // Challenge IDs issued for THIS auth — cleaned up once the auth resolves,
-        // so losing/timed-out entries don't leak in pendingAuthentications.
-        let issuedIDs = LockedBox<[UUID]>([])
-
-        let result: ChallengeResult? = await withCheckedContinuation { outer in
-            let wrapped = OnceContinuation(outer)
-
-            // Challenge-dispatch task: issue to all identified devices, then just wait.
-            Task {
-                var issued = 0
-                for centralID in targets {
-                    if let challengeID = await self.issueChallenge(to: centralID, reason: service) {
-                        self.stateLock.withLock {
-                            self.pendingAuthentications[challengeID] = wrapped
-                        }
-                        issuedIDs.mutate { $0.append(challengeID) }
-                        issued += 1
-                    }
+        pruneTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 30_000_000_000) } catch { break }
+                guard let self else { break }
+                await self.challengeManager.pruneExpired()
+                let expired = self.stateLock.withLock { () -> [UUID] in
+                    let ids = self.pending.filter { $0.value.waiter == nil }.map(\.key)
+                    for id in ids { self.pending.removeValue(forKey: id) }; return ids
                 }
-                if issued == 0 {
-                    wrapped.resume(returning: .unknownChallenge)
-                }
-                // Otherwise: wait — the first device response (or timeout below) resumes outer.
+                for id in expired { await self.challengeManager.cancel(id) }
             }
-
-            // Timeout task: resumes with nil after the deadline.
-            Task {
-                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                wrapped.resume(returning: nil)
-            }
-        }
-
-        // The auth is resolved — drop every challenge entry it created (the winning
-        // response already removed its own; siblings and timeouts are removed here).
-        stateLock.withLock {
-            for id in issuedIDs.value {
-                pendingAuthentications.removeValue(forKey: id)
-            }
-        }
-
-        if let result, result == .verified {
-            return (true, nil)
-        }
-
-        let reason: String
-        switch result {
-        case .expired: reason = "challenge_expired"
-        case .invalidSignature: reason = "invalid_signature"
-        case .replayDetected: reason = "replay_detected"
-        case .unknownChallenge: reason = "challenge_failed"
-        case .keyInvalidated: reason = "key_invalidated"
-        case nil: reason = "timeout"
-        case .verified: reason = "unknown" // unreachable
-        }
-
-        return (false, reason)
-    }
-
-    /// Get all connected central UUIDs that have completed ECDH.
-    public var readyCentrals: [UUID] {
-        stateLock.withLock {
-            sessions.filter { $0.value.sessionCrypto != nil }.map(\.key)
         }
     }
-
-    /// Get all connected centrals that are both encrypted and recognised as a
-    /// previously paired device, so they can receive challenges.
+    public func startAdvertising() { bleServer.startAdvertising() }
+    public func stop() {
+        bleServer.stopAdvertising(); pruneTask?.cancel(); pruneTask = nil
+        presenceTask?.cancel(); presenceTask = nil
+        let old = stateLock.withLock { () -> [Pending] in
+            let old = Array(pending.values); pending.removeAll(); sessions.removeAll()
+            publishPresenceLocked(); return old
+        }
+        for item in old { item.waiter?.resume(nil) }
+    }
+    public var readyCentrals: [UUID] { stateLock.withLock { Array(sessions.keys) } }
     public var identifiedCentrals: [UUID] {
-        stateLock.withLock {
-            sessions.filter { $0.value.sessionCrypto != nil && $0.value.deviceID != nil }.map(\.key)
+        let now = presenceNow()
+        return stateLock.withLock { sessions.filter { isVerified($0.value, now: now) }.map(\.key) }
+    }
+    private func isVerified(_ session: SessionState, now: TimeInterval) -> Bool {
+        session.deviceID != nil && session.presenceDeadline > now
+    }
+    /// Called only under stateLock. Enqueue there to preserve mutation order;
+    /// callbacks always execute later on a single queue, outside the lock.
+    private func publishPresenceLocked() {
+        let count = sessions.values.filter { isVerified($0, now: presenceNow()) }.count
+        let callback = presenceCallback
+        presenceQueue.async { callback?(count) }
+    }
+    func waitForPresencePublications() async {
+        await withCheckedContinuation { continuation in
+            presenceQueue.async { continuation.resume() }
         }
+    }
+    /// Monotonic, independently testable lease maintenance; no biometric prompts.
+    func maintainPresence() {
+        let now = presenceNow()
+        var pings: [(UUID, SessionState, Data)] = []
+        var cancelled: [UUID: Pending] = [:]
+        stateLock.withLock {
+            var removed = false
+            for centralID in Array(sessions.keys) {
+                guard var session = sessions[centralID], session.deviceID != nil else { continue }
+                if session.presenceDeadline <= now {
+                    // Remove the transcript too: replaying the original identify cannot revive it.
+                    sessions.removeValue(forKey: centralID); removed = true
+                    for (id, item) in pending where item.centralID == centralID {
+                        cancelled[id] = item
+                    }
+                    continue
+                }
+                if session.pendingHeartbeatNonce == nil && session.nextHeartbeatAt <= now {
+                    let nonce = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+                    session.pendingHeartbeatNonce = nonce
+                    session.nextHeartbeatAt = now + heartbeatInterval
+                    sessions[centralID] = session
+                    pings.append((centralID, session, nonce))
+                }
+            }
+            for id in cancelled.keys { pending.removeValue(forKey: id) }
+            if removed { publishPresenceLocked() }
+        }
+        for item in cancelled.values { item.waiter?.resume(nil) }
+        if !cancelled.isEmpty {
+            let ids = Array(cancelled.keys)
+            Task { for id in ids { await challengeManager.cancel(id) } }
+        }
+        for (centralID, session, nonce) in pings {
+            guard let wire = try? WireFormat.seal(.presencePing, PresenceHeartbeatMessage(nonce: nonce), crypto: session.crypto) else { continue }
+            _ = bleServer.sendChallenge(wire, to: centralID)
+        }
+    }
+    public var macIdentityPublicKey: Data? { try? keychainStore.macIdentityPublicKey() }
+    public var macIdentityFingerprint: String? { macIdentityPublicKey.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() } }
+    public func issueChallenge(to centralID: UUID, reason: String) async -> UUID? {
+        guard let hash = try? keychainStore.macIdentityPublicKey().sha256 else { return nil }
+        let issued = UInt64(Date().timeIntervalSince1970)
+        let service = reason.utf8.count <= 64 && reason.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || [95,46,58,45].contains($0) }) && !reason.isEmpty ? reason : "diagnostics"
+        let payload = AuthorizationPayload(purpose: .diagnostics, nonce: Data((0..<32).map { _ in UInt8.random(in: 0...255) }), macIdentityHash: hash, uid: getuid(), pid: UInt32(getpid()), issued: issued, expiry: issued + 10, user: NSUserName(), service: service)
+        guard let bytes = try? payload.encode() else { return nil }
+        return await dispatch(centralID: centralID, authorization: bytes, waiter: nil)
+    }
+    private func dispatch(centralID: UUID, authorization: Data, waiter: ProofWaiter?) async -> UUID? {
+        guard let session = stateLock.withLock({ sessions[centralID] }), isVerified(session, now: presenceNow()), let deviceID = session.deviceID else { return nil }
+        do {
+            let challenge = try await challengeManager.issue(for: deviceID, authorization: authorization, sessionID: session.id)
+            let message = AuthorizationChallengeMessage(challengeID: challenge.id.uuidString, authorization: authorization)
+            let bytes = try WireFormat.seal(.challengeIssued, message, crypto: session.crypto)
+            let valid = stateLock.withLock { () -> Bool in
+                guard let current = sessions[centralID], current.id == session.id, isVerified(current, now: presenceNow()), waiter?.isResolved != true else { return false }
+                pending[challenge.id] = Pending(centralID: centralID, sessionID: session.id, deviceID: deviceID, waiter: waiter); return true
+            }
+            guard valid, bleServer.sendChallenge(bytes, to: centralID) else {
+                stateLock.withLock { _ = pending.removeValue(forKey: challenge.id) }; await challengeManager.cancel(challenge.id); return nil
+            }
+            let context = try AuthorizationPayload.parse(authorization)
+            await auditLog.log(AuditEntry(sessionID: challenge.id.uuidString, surface: context.service, deviceID: deviceID, result: "ISSUED"))
+            return challenge.id
+        } catch { return nil }
+    }
+    /// Used only by the explicit diagnostic socket action, never privileged PAM.
+    public func authenticateFromPAM(user: String, service: String, pid: Int, timeout: TimeInterval) async -> (success: Bool, reason: String?) {
+        guard pid > 0, pid <= Int(UInt32.max), let identity = try? keychainStore.macIdentityPublicKey() else { return (false, "invalid_diagnostic_context") }
+        let now = UInt64(Date().timeIntervalSince1970)
+        let payload = AuthorizationPayload(purpose: .diagnostics, nonce: Data((0..<32).map { _ in UInt8.random(in: 0...255) }), macIdentityHash: identity.sha256, uid: getuid(), pid: UInt32(pid), issued: now, expiry: now + 10, user: user, service: service)
+        guard let bytes = try? payload.encode() else { return (false, "invalid_diagnostic_context") }
+        let proof = await requestProof(challenge: bytes, timeout: timeout, purpose: .diagnostics)
+        return (proof != nil, proof == nil ? "diagnostic_authentication_failed" : nil)
+    }
+    public func authenticateProof(challenge: Data, timeout: TimeInterval) async -> PAMProof? {
+        await requestProof(challenge: challenge, timeout: timeout, purpose: .pam)
+    }
+    private func requestProof(challenge: Data, timeout: TimeInterval, purpose: AuthorizationPayload.Purpose) async -> PAMProof? {
+        guard let payload = try? AuthorizationPayload.parse(challenge), payload.purpose == purpose,
+              let identity = try? keychainStore.macIdentityPublicKey(), (try? payload.validate(macIdentityHash: identity.sha256)) != nil else { return nil }
+        let targets = identifiedCentrals
+        guard !targets.isEmpty else { return nil }
+        let waiter = ProofWaiter()
+        let deadline = min(max(0, timeout), TimeInterval(payload.expiry) - Date().timeIntervalSince1970, 30)
+        guard deadline > 0 else { return nil }
+        let timeoutTask = Task { do { try await Task.sleep(nanoseconds: UInt64(deadline * 1_000_000_000)); waiter.resume(nil) } catch {} }
+        for id in targets { if waiter.isResolved { break }; _ = await dispatch(centralID: id, authorization: challenge, waiter: waiter) }
+        let hasPending = stateLock.withLock { pending.values.contains { $0.waiter === waiter } }
+        if !hasPending { waiter.resume(nil) }
+        let proof = await withTaskCancellationHandler(operation: { await waiter.value() }, onCancel: { waiter.resume(nil) })
+        timeoutTask.cancel()
+        let ids = stateLock.withLock { () -> [UUID] in let ids = pending.filter { $0.value.waiter === waiter }.map(\.key); for id in ids { pending.removeValue(forKey: id) }; return ids }
+        for id in ids { await challengeManager.cancel(id) }
+        return proof
     }
 }
-
-// MARK: - BLEServerDelegate
 
 extension DaemonCoordinator: BLEServerDelegate {
-
-    public func bleServer(_ server: any BLEServerInterface, centralDidConnect centralID: UUID) {
-        logger.info("Central connected: \(centralID)")
-        stateLock.withLock { sessions[centralID] = SessionState() }
-    }
-
+    public func bleServer(_ server: any BLEServerInterface, centralDidConnect centralID: UUID) {}
     public func bleServer(_ server: any BLEServerInterface, centralDidDisconnect centralID: UUID) {
-        logger.info("Central disconnected: \(centralID)")
-        stateLock.withLock { _ = sessions.removeValue(forKey: centralID) }
+        let old = stateLock.withLock { () -> [Pending] in
+            sessions.removeValue(forKey: centralID)
+            let old = pending.filter { $0.value.centralID == centralID }
+            for id in old.keys { pending.removeValue(forKey: id) }
+            publishPresenceLocked(); return Array(old.values)
+        }
+        for item in old { item.waiter?.resume(nil) }
     }
-
     public func bleServer(_ server: any BLEServerInterface, didReceiveSessionKey data: Data, from centralID: UUID) -> Data? {
-        logger.info("Received session key from \(centralID)")
-
         do {
-            // Import their ephemeral public key
-            let theirPublic = try SessionCrypto.importPublicKey(data)
-
-            // Generate our ephemeral key pair
-            let (myPrivate, myPublic) = SessionCrypto.generateEphemeralKeyPair()
-
-            // Derive session
-            let session = try SessionCrypto.deriveSession(myPrivate: myPrivate, theirPublic: theirPublic)
-
-            stateLock.withLock {
-                var state = sessions[centralID] ?? SessionState()
-                state.ephemeralPrivateKey = myPrivate
-                state.sessionCrypto = session
-                state.deviceID = nil
-                sessions[centralID] = state
+            let hello = try JSONDecoder().decode(ClientHello.self, from: data)
+            guard hello.version == 2, data.count <= 512 else { return nil }
+            let client = try SessionCrypto.importPublicKey(hello.ephemeralKey)
+            let (key, pub) = SessionCrypto.generateEphemeralKeyPair()
+            let transcript = try SecureHandshake.transcript(clientKey: hello.ephemeralKey, serverKey: pub.x963Representation, service: serviceUUID)
+            let crypto = try SessionCrypto.deriveSession(myPrivate: key, theirPublic: client)
+            let response = ServerHello(ephemeralKey: pub.x963Representation, identityKey: try keychainStore.macIdentityPublicKey(), signature: try keychainStore.signMacIdentity(transcript))
+            let replaced = stateLock.withLock { () -> Bool in
+                guard sessions[centralID] != nil || sessions.count < 32 else { return false }
+                sessions[centralID] = SessionState(crypto: crypto, transcript: transcript)
+                publishPresenceLocked(); return true
             }
-
-            logger.info("ECDH session established with \(centralID)")
-
-            // Return our public key for them to derive the same session
-            return SessionCrypto.exportPublicKey(myPublic)
-        } catch {
-            logger.error("ECDH key exchange failed: \(error.localizedDescription)")
-            return nil
-        }
+            guard replaced else { return nil }
+            return try JSONEncoder().encode(response)
+        } catch { return nil }
     }
-
     public func bleServer(_ server: any BLEServerInterface, didReceivePairingData data: Data, from centralID: UUID) {
-        logger.info("Received pairing data from \(centralID)")
-
         Task {
+            guard let session = stateLock.withLock({ sessions[centralID] }), session.deviceID == nil else { return }
             do {
-                // Detect wire-format messages (version=1, valid type byte) vs legacy raw-JSON pairing.
-                // Identify messages always use wire format; pairing requests use raw JSON currently.
-                if data.count >= 2, data[data.startIndex] == 1,
-                   let msgType = MessageType(rawValue: data[data.startIndex + 1]),
-                   msgType == .identify {
-                    try await handleIdentify(data: data, from: centralID)
-                    return
+                let decoded = try WireFormat.open(data, crypto: session.crypto)
+                let device: PairedDevice
+                if decoded.type == .pairRequest {
+                    let msg = try WireFormat.decodePayload(PairRequestMessage.self, from: decoded.payload)
+                    guard let id = msg.deviceID, let token = msg.pairingToken, let signature = msg.signature else { return }
+                    let bytes = try SecureHandshake.possessionBytes(transcript: session.transcript, deviceID: id, deviceName: msg.deviceName, publicKey: msg.publicKey, token: token)
+                    guard try P256.Signing.PublicKey(x963Representation: msg.publicKey).isValidSignature(P256.Signing.ECDSASignature(derRepresentation: signature), for: bytes) else { return }
+                    guard stateLock.withLock({ sessions[centralID]?.id == session.id }) else { return }
+                    device = try await pairingManager.validatePairingRequest(token: token, devicePublicKey: msg.publicKey, deviceName: msg.deviceName, deviceID: id)
+                    guard stateLock.withLock({ sessions[centralID]?.id == session.id }) else { return }
+                    try await pairingManager.completePairing(device: device)
+                } else if decoded.type == .identify {
+                    let msg = try WireFormat.decodePayload(IdentifyMessage.self, from: decoded.payload)
+                    guard let signature = msg.signature else { return }
+                    device = try keychainStore.retrievePairedDevice(deviceID: msg.deviceID)
+                    let bytes = try SecureHandshake.possessionBytes(transcript: session.transcript, deviceID: msg.deviceID, deviceName: msg.deviceName, publicKey: device.publicKey, token: nil)
+                    guard try P256.Signing.PublicKey(x963Representation: device.publicKey).isValidSignature(P256.Signing.ECDSASignature(derRepresentation: signature), for: bytes) else { return }
+                } else { return }
+                let valid = stateLock.withLock { () -> Bool in
+                    guard sessions[centralID]?.id == session.id, sessions[centralID]?.deviceID == nil else { return false }
+                    sessions[centralID]?.deviceID = device.deviceID
+                    sessions[centralID]?.presenceDeadline = presenceNow() + presenceLease
+                    sessions[centralID]?.nextHeartbeatAt = presenceNow()
+                    publishPresenceLocked(); return true
                 }
-
-                let (_, payload) = try WireFormat.decode(data: data)
-                let request = try WireFormat.decodePayload(PairRequestMessage.self, from: payload)
-
-                let device = try await pairingManager.validatePairingRequest(
-                    token: request.pairingToken ?? Data(),
-                    devicePublicKey: request.publicKey,
-                    deviceName: request.deviceName,
-                    deviceID: request.deviceID ?? centralID.uuidString
-                )
-
-                try await pairingManager.completePairing(device: device)
-                stateLock.withLock { sessions[centralID]?.deviceID = device.deviceID }
-
-                // Send acceptance response
-                let response = PairResponseMessage(
-                    deviceID: device.deviceID,
-                    publicKey: Data(),
-                    accepted: true
-                )
-                let wireResponse = try WireFormat.encode(.pairResponse, response)
-                _ = server.sendPairingData(wireResponse, to: centralID)
-
-                await auditLog.log(AuditEntry(
-                    sessionID: centralID.uuidString,
-                    surface: "pairing",
-                    companionDevice: device.displayName,
-                    deviceID: device.deviceID,
-                    result: "PAIRED"
-                ))
-
-                onPairingComplete?(device)
-                logger.info("Pairing completed for \(device.displayName)")
-            } catch {
-                logger.error("Pairing failed: \(error.localizedDescription)")
-
-                // Send rejection
-                if let response = try? WireFormat.encode(.pairResponse, PairResponseMessage(
-                    deviceID: "",
-                    publicKey: Data(),
-                    accepted: false
-                )) {
-                    _ = server.sendPairingData(response, to: centralID)
-                }
-            }
+                guard valid else { return }
+                let response = PairResponseMessage(deviceID: device.deviceID, publicKey: device.publicKey, accepted: true)
+                _ = server.sendPairingData(try WireFormat.seal(.pairResponse, response, crypto: session.crypto), to: centralID)
+                if decoded.type == .pairRequest { onPairingComplete?(device) }
+                await auditLog.log(AuditEntry(sessionID: centralID.uuidString, surface: decoded.type == .pairRequest ? "pairing" : "identify", deviceID: device.deviceID, result: decoded.type == .pairRequest ? "PAIRED" : "IDENTIFIED"))
+            } catch { /* Reject silently; no unauthenticated acceptance or downgrade. */ }
         }
     }
-
     public func bleServer(_ server: any BLEServerInterface, didReceiveResponse data: Data, from centralID: UUID) {
-        logger.info("Received challenge response from \(centralID)")
-
         Task {
+            guard let session = stateLock.withLock({ sessions[centralID] }), isVerified(session, now: presenceNow()), let deviceID = session.deviceID else { return }
             do {
-                let (msgType, payload) = try WireFormat.decode(data: data)
-
-                // Handle companion error messages (e.g. key invalidated).
-                // The error payload is AES-GCM encrypted with the session key.
-                if msgType == .error {
-                    guard let crypto = stateLock.withLock({ sessions[centralID]?.sessionCrypto }) else {
-                        logger.warning("Error message from \(centralID) but no session crypto — ignoring")
-                        return
-                    }
-                    let plaintext = try crypto.decrypt(ciphertext: payload)
-                    let errMsg = try WireFormat.decodePayload(ErrorMessage.self, from: plaintext)
-                    logger.warning("Companion error \(errMsg.code): \(errMsg.description)")
-
-                    if errMsg.code == ErrorCode.keyInvalidated.rawValue,
-                       let cidStr = errMsg.challengeID,
-                       let challengeID = UUID(uuidString: cidStr) {
-                        // Log before resuming so callers that await the result immediately
-                        // and then read the audit log always see the entry.
-                        await auditLog.log(AuditEntry(
-                            sessionID: cidStr,
-                            surface: "challenge",
-                            deviceID: errMsg.description,
-                            result: "FAILED_KEY_INVALIDATED"
-                        ))
-                        let continuation = stateLock.withLock {
-                            pendingAuthentications.removeValue(forKey: challengeID)
-                        }
-                        continuation?.resume(returning: .keyInvalidated)
+                let decoded = try WireFormat.open(data, crypto: session.crypto)
+                if decoded.type == .presencePong {
+                    let pong = try WireFormat.decodePayload(PresenceHeartbeatMessage.self, from: decoded.payload)
+                    guard pong.nonce.count == 32 else { return }
+                    stateLock.withLock {
+                        guard var current = sessions[centralID], current.id == session.id,
+                              isVerified(current, now: presenceNow()), current.pendingHeartbeatNonce == pong.nonce else { return }
+                        current.pendingHeartbeatNonce = nil // Consume before extending the lease.
+                        current.presenceDeadline = presenceNow() + presenceLease
+                        current.nextHeartbeatAt = presenceNow() + heartbeatInterval
+                        sessions[centralID] = current
                     }
                     return
                 }
-
-                let response = try WireFormat.decodePayload(ChallengeResponseMessage.self, from: payload)
-
-                guard let challengeID = UUID(uuidString: response.challengeID) else {
-                    logger.error("Invalid challenge ID in response")
-                    return
+                if decoded.type == .error {
+                    let message = try WireFormat.decodePayload(ErrorMessage.self, from: decoded.payload)
+                    guard message.code == ErrorCode.keyInvalidated.rawValue, let text = message.challengeID, let id = UUID(uuidString: text) else { return }
+                    let item = stateLock.withLock { () -> Pending? in guard let item = pending[id], item.centralID == centralID, item.sessionID == session.id else { return nil }; return pending.removeValue(forKey: id) }
+                    guard let item else { return }
+                    await challengeManager.cancel(id)
+                    await auditLog.log(AuditEntry(sessionID: id.uuidString, surface: "challenge", deviceID: deviceID, result: "FAILED_KEY_INVALIDATED"))
+                    item.waiter?.resume(nil); onChallengeResult?(id, .keyInvalidated, deviceID); return
                 }
-
-                let publicKey = try keychainStore.retrievePublicKey(for: response.deviceID)
-                let startTime = Date()
-
-                let result = await challengeManager.verify(
-                    challengeID: challengeID,
-                    signature: response.signature,
-                    publicKey: publicKey
-                )
-
-                let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
-
-                let resultString: String
-                switch result {
-                case .verified: resultString = "VERIFIED"
-                case .expired: resultString = "FAILED_TIMEOUT"
-                case .invalidSignature: resultString = "FAILED_SIGNATURE"
-                case .replayDetected: resultString = "FAILED_REPLAY"
-                case .unknownChallenge: resultString = "FAILED_SIGNATURE"
-                case .keyInvalidated: resultString = "FAILED_KEY_INVALIDATED"
-                }
-
-                await auditLog.log(AuditEntry(
-                    sessionID: response.challengeID,
-                    surface: "challenge",
-                    companionDevice: response.deviceID,
-                    deviceID: response.deviceID,
-                    result: resultString,
-                    rssi: server.averageRSSI(for: centralID),
-                    latencyMs: latencyMs
-                ))
-
-                // Resume any pending PAM authentication continuation
-                let continuation = stateLock.withLock {
-                    pendingAuthentications.removeValue(forKey: challengeID)
-                }
-                continuation?.resume(returning: result)
-
-                onChallengeResult?(challengeID, result, response.deviceID)
-
-                logger.info("Challenge \(response.challengeID): \(resultString)")
-            } catch {
-                logger.error("Response processing failed: \(error.localizedDescription)")
-            }
+                guard decoded.type == .challengeResponse else { return }
+                let response = try WireFormat.decodePayload(ChallengeResponseMessage.self, from: decoded.payload)
+                guard response.deviceID == deviceID, let id = UUID(uuidString: response.challengeID),
+                      let item = stateLock.withLock({ pending[id] }), item.centralID == centralID, item.sessionID == session.id, item.deviceID == deviceID else { return }
+                let key = try keychainStore.retrievePublicKey(for: deviceID)
+                let result = await challengeManager.verify(challengeID: id, signature: response.signature, publicKey: key, expectedDeviceID: deviceID, expectedSessionID: session.id)
+                let stillValid = stateLock.withLock { () -> Bool in guard let current = sessions[centralID], current.id == session.id, isVerified(current, now: presenceNow()) else { return false }; return pending.removeValue(forKey: id) != nil }
+                guard stillValid else { return }
+                await auditLog.log(AuditEntry(sessionID: id.uuidString, surface: "challenge", deviceID: deviceID, result: result == .verified ? "VERIFIED" : "FAILED_SIGNATURE"))
+                guard stateLock.withLock({ sessions[centralID].map { $0.id == session.id && isVerified($0, now: presenceNow()) } == true }) else { item.waiter?.resume(nil); return }
+                if result == .verified { item.waiter?.resume(PAMProof(deviceID: deviceID, signature: response.signature)) }
+                onChallengeResult?(id, result, deviceID)
+            } catch { }
         }
-    }
-
-    // MARK: - Identify
-
-    /// Handle an encrypted identify message from a reconnecting companion.
-    ///
-    /// A previously-paired device sends this after ECDH to tell the daemon its deviceID
-    /// without going through a full pairing ceremony. The daemon looks up the deviceID in
-    /// the keychain and, if found, marks the session as identified so it can receive challenges.
-    private func handleIdentify(data: Data, from centralID: UUID) async throws {
-        guard let crypto = stateLock.withLock({ sessions[centralID]?.sessionCrypto }) else {
-            logger.warning("Identify from \(centralID): no session crypto — ignoring")
-            return
-        }
-
-        // Strip the 2-byte wire header, then decrypt.
-        let encryptedPayload = data.dropFirst(2)
-        let plaintext = try crypto.decrypt(ciphertext: Data(encryptedPayload))
-
-        // The payload is a JSON object with deviceID and deviceName.
-        // We use a local struct to avoid importing TouchBridgeProtocol's IdentifyMessage
-        // (which is fine here since we're in the daemon — same package as DaemonCoordinator).
-        let msg = try WireFormat.decodePayload(IdentifyMessage.self, from: plaintext)
-
-        // Verify this device is actually in the keychain (was paired at some point).
-        guard (try? keychainStore.retrievePairedDevice(deviceID: msg.deviceID)) != nil else {
-            logger.warning("Identify from \(centralID): unknown deviceID \(msg.deviceID) — ignoring")
-            return
-        }
-
-        stateLock.withLock { sessions[centralID]?.deviceID = msg.deviceID }
-        logger.info("Identified \(msg.deviceName) (\(msg.deviceID)) on central \(centralID)")
-
-        await auditLog.log(AuditEntry(
-            sessionID: centralID.uuidString,
-            surface: "identify",
-            companionDevice: msg.deviceName,
-            deviceID: msg.deviceID,
-            result: "IDENTIFIED"
-        ))
     }
 }
+private extension Data { var sha256: Data { Data(SHA256.hash(data: self)) } }
+private final class ProofWaiter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    private var proof: PAMProof?
+    private var continuation: CheckedContinuation<PAMProof?, Never>?
+    var isResolved: Bool { lock.withLock { done } }
+    func resume(_ value: PAMProof?) { lock.withLock { guard !done else { return }; done = true; proof = value; continuation?.resume(returning: value); continuation = nil } }
+    func value() async -> PAMProof? { await withCheckedContinuation { c in lock.withLock { if done { c.resume(returning: proof) } else { continuation = c } } } }
+}
 
-// MARK: - LockedBox
-
-/// Minimal lock-guarded mutable container for values shared across concurrent Tasks.
 final class LockedBox<T>: @unchecked Sendable {
     private var _value: T
     private let lock = NSLock()
-
-    init(_ value: T) {
-        self._value = value
-    }
-
-    var value: T {
-        lock.withLock { _value }
-    }
-
-    func mutate(_ body: (inout T) -> Void) {
-        lock.withLock { body(&_value) }
-    }
+    init(_ value: T) { _value = value }
+    var value: T { lock.withLock { _value } }
+    func mutate(_ body: (inout T) -> Void) { lock.withLock { body(&_value) } }
 }
-
-// MARK: - OnceContinuation
-
-/// Wraps a `CheckedContinuation` so it can safely be resumed at most once.
-///
-/// `authenticateFromPAM` stores the same `OnceContinuation` under every challenge ID
-/// it broadcasts. The first resume (from a device response or the timeout Task) wins;
-/// all subsequent calls are silent no-ops.
-///
-/// Holds `ChallengeResult?` so the timeout Task can pass `nil` ("no result = timeout")
-/// while device-response tasks pass a concrete `ChallengeResult`.
 final class OnceContinuation: @unchecked Sendable {
     private var inner: CheckedContinuation<ChallengeResult?, Never>?
     private let lock = NSLock()
-
-    init(_ continuation: CheckedContinuation<ChallengeResult?, Never>) {
-        self.inner = continuation
-    }
-
-    func resume(returning value: ChallengeResult?) {
-        lock.withLock {
-            guard let c = inner else { return }
-            inner = nil
-            c.resume(returning: value)
-        }
-    }
+    init(_ continuation: CheckedContinuation<ChallengeResult?, Never>) { inner = continuation }
+    func resume(returning value: ChallengeResult?) { lock.withLock { guard let c = inner else { return }; inner = nil; c.resume(returning: value) } }
 }

@@ -41,6 +41,7 @@ cd "$PROJECT_DIR"
 make -C pam clean 2>/dev/null || true
 make -C pam 2>&1 | tail -1
 cp pam/pam_touchbridge.so "$BUILD_DIR/"
+cp pam/touchbridge-trust "$BUILD_DIR/"
 echo "  ✓ PAM module built (universal binary)"
 
 # 3. Build menu bar app
@@ -63,49 +64,76 @@ fi
 echo "[4/5] Creating installer package..."
 PKG_ROOT="$BUILD_DIR/pkg-root"
 mkdir -p "$PKG_ROOT/usr/local/bin"
-mkdir -p "$PKG_ROOT/usr/local/lib/pam"
-mkdir -p "$PKG_ROOT/usr/local/share/touchbridge"
+mkdir -p "$PKG_ROOT/Library/Security/TouchBridge"
+PKG_SCRIPTS="$BUILD_DIR/pkg-scripts"
+mkdir -p "$PKG_SCRIPTS"
 
 cp "$BUILD_DIR/touchbridged" "$PKG_ROOT/usr/local/bin/"
 cp "$BUILD_DIR/touchbridge-test" "$PKG_ROOT/usr/local/bin/"
 cp "$BUILD_DIR/touchbridge-nmh" "$PKG_ROOT/usr/local/bin/"
-cp "$BUILD_DIR/pam_touchbridge.so" "$PKG_ROOT/usr/local/lib/pam/"
-cp "$PROJECT_DIR/scripts/install.sh" "$PKG_ROOT/usr/local/share/touchbridge/"
-cp "$PROJECT_DIR/scripts/uninstall.sh" "$PKG_ROOT/usr/local/share/touchbridge/"
-cp "$PROJECT_DIR/scripts/patch-pam.sh" "$PKG_ROOT/usr/local/share/touchbridge/"
-cp "$PROJECT_DIR/scripts/pam-common.sh" "$PKG_ROOT/usr/local/share/touchbridge/"
-cp "$PROJECT_DIR/daemon/dev.touchbridge.daemon.plist" "$PKG_ROOT/usr/local/share/touchbridge/"
+cp "$BUILD_DIR/pam_touchbridge.so" "$PKG_ROOT/Library/Security/TouchBridge/"
+cp "$BUILD_DIR/touchbridge-trust" "$PKG_ROOT/Library/Security/TouchBridge/"
+for helper in uninstall.sh patch-pam.sh pam-common.sh; do
+    cp "$PROJECT_DIR/scripts/$helper" "$PKG_ROOT/Library/Security/TouchBridge/"
+done
+cp "$PROJECT_DIR/daemon/dev.touchbridge.daemon.plist" "$PKG_ROOT/Library/Security/TouchBridge/"
+cp "$PROJECT_DIR/scripts/pam-common.sh" "$PKG_SCRIPTS/"
+cp "$BUILD_DIR/touchbridge-trust" "$PKG_SCRIPTS/"
+
+# Retire legacy hooks BEFORE pkg payload writes or replacement. Use only the
+# helper bundled in the installer transaction, never /usr/local/share code.
+cat > "$PKG_SCRIPTS/preinstall" << 'PREINSTALL'
+#!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/pam-common.sh"
+tb_disable_sudo
+tb_disable_screensaver
+"$SCRIPT_DIR/touchbridge-trust" prepare
+for name in pam_touchbridge.so touchbridge-trust pam-common.sh patch-pam.sh uninstall.sh dev.touchbridge.daemon.plist; do
+    path="/Library/Security/TouchBridge/$name"
+    if [ -e "$path" ] || [ -L "$path" ]; then "$SCRIPT_DIR/touchbridge-trust" check "$path" file; fi
+done
+PREINSTALL
+chmod 755 "$PKG_SCRIPTS/preinstall" "$PKG_SCRIPTS/touchbridge-trust"
 
 # Post-install script
-cat > "$BUILD_DIR/postinstall" << 'POSTINSTALL'
+cat > "$PKG_SCRIPTS/postinstall" << 'POSTINSTALL'
 #!/bin/bash
+set -euo pipefail
+TRUST_TOOL="/Library/Security/TouchBridge/touchbridge-trust"
+"$TRUST_TOOL" check "$TRUST_TOOL" file
+"$TRUST_TOOL" check /Library/Security/TouchBridge/pam_touchbridge.so file
+chmod 444 /Library/Security/TouchBridge/pam_touchbridge.so
 # Create directories
-ACTUAL_USER="${SUDO_USER:-$(whoami)}"
-ACTUAL_HOME=$(eval echo "~$ACTUAL_USER")
-mkdir -p "$ACTUAL_HOME/Library/Application Support/TouchBridge"
-mkdir -p "$ACTUAL_HOME/Library/Logs/TouchBridge"
-chmod 700 "$ACTUAL_HOME/Library/Application Support/TouchBridge"
+ACTUAL_USER="${SUDO_USER:-$(stat -f %Su /dev/console)}"
+if [ "$ACTUAL_USER" = root ] || [ "$ACTUAL_USER" = loginwindow ]; then
+    echo "Secure binaries installed; complete user setup and fingerprint enrollment from a logged-in account."
+    exit 0
+fi
+ACTUAL_HOME=$(dscl . -read "/Users/$ACTUAL_USER" NFSHomeDirectory | sed 's/^NFSHomeDirectory: //')
+sudo -u "$ACTUAL_USER" mkdir -p "$ACTUAL_HOME/Library/Application Support/TouchBridge" "$ACTUAL_HOME/Library/Logs/TouchBridge" "$ACTUAL_HOME/Library/LaunchAgents"
+sudo -u "$ACTUAL_USER" chmod 700 "$ACTUAL_HOME/Library/Application Support/TouchBridge"
 
 # Install LaunchAgent
-PLIST_SRC="/usr/local/share/touchbridge/dev.touchbridge.daemon.plist"
+PLIST_SRC="/Library/Security/TouchBridge/dev.touchbridge.daemon.plist"
 PLIST_DST="$ACTUAL_HOME/Library/LaunchAgents/dev.touchbridge.daemon.plist"
-cp "$PLIST_SRC" "$PLIST_DST"
-chown "$ACTUAL_USER" "$PLIST_DST"
+sudo -u "$ACTUAL_USER" cp "$PLIST_SRC" "$PLIST_DST"
 
 # Set permissions
 chmod 755 /usr/local/bin/touchbridged
 chmod 755 /usr/local/bin/touchbridge-test
 chmod 755 /usr/local/bin/touchbridge-nmh
-chmod 444 /usr/local/lib/pam/pam_touchbridge.so
 
-echo "TouchBridge installed. Run the menu bar app to complete setup."
+echo "TouchBridge installed. PAM remains disabled until explicit root fingerprint enrollment and activation."
 exit 0
 POSTINSTALL
-chmod +x "$BUILD_DIR/postinstall"
+chmod +x "$PKG_SCRIPTS/postinstall"
 
 pkgbuild \
     --root "$PKG_ROOT" \
-    --scripts "$BUILD_DIR" \
+    --scripts "$PKG_SCRIPTS" \
+    --ownership recommended \
     --identifier "dev.touchbridge.pkg" \
     --version "$VERSION" \
     --install-location "/" \

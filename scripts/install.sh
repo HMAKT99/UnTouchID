@@ -9,7 +9,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_BIN="/usr/local/bin/touchbridged"
-PAM_LIB="/usr/local/lib/pam/pam_touchbridge.so"
+PAM_LIB="/Library/Security/TouchBridge/pam_touchbridge.so"
+TRUST_TOOL="/Library/Security/TouchBridge/touchbridge-trust"
 LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/dev.touchbridge.daemon.plist"
 APP_SUPPORT_DIR="$HOME/Library/Application Support/TouchBridge"
 LOG_DIR="$HOME/Library/Logs/TouchBridge"
@@ -55,7 +56,8 @@ fi
 
 # Get the actual user (not root)
 ACTUAL_USER="${SUDO_USER:-$(whoami)}"
-ACTUAL_HOME=$(eval echo "~$ACTUAL_USER")
+ACTUAL_HOME=$(dscl . -read "/Users/$ACTUAL_USER" NFSHomeDirectory | sed 's/^NFSHomeDirectory: //')
+ACTUAL_UID=$(id -u "$ACTUAL_USER")
 APP_SUPPORT_DIR="$ACTUAL_HOME/Library/Application Support/TouchBridge"
 LOG_DIR="$ACTUAL_HOME/Library/Logs/TouchBridge"
 LAUNCH_AGENT_PLIST="$ACTUAL_HOME/Library/LaunchAgents/dev.touchbridge.daemon.plist"
@@ -84,6 +86,15 @@ if [ ! -f "$PAM_BUILD" ]; then
 fi
 info "PAM module built successfully."
 
+# Disable all old/new hooks before replacing privileged code. Keep password auth
+# and unrelated PAM entries; historical backups are preserved by the helper.
+source "$SCRIPT_DIR/pam-common.sh"
+tb_disable_sudo
+tb_disable_screensaver
+
+# Prepare only our own directories. Never chmod/chown Homebrew ancestors.
+"$PROJECT_DIR/pam/touchbridge-trust" prepare
+
 # --- Install Binaries ---
 
 info "Installing daemon binary..."
@@ -93,9 +104,20 @@ chmod 755 "$DAEMON_BIN"
 info "Installed $DAEMON_BIN"
 
 info "Installing PAM module..."
-mkdir -p "$(dirname "$PAM_LIB")"
-cp "$PAM_BUILD" "$PAM_LIB"
-chmod 444 "$PAM_LIB"
+for target in "$PAM_LIB" "$TRUST_TOOL"; do
+    if [ -e "$target" ] || [ -L "$target" ]; then
+        "$PROJECT_DIR/pam/touchbridge-trust" check "$target" file
+    fi
+done
+install -o root -g wheel -m 444 "$PAM_BUILD" "$PAM_LIB"
+install -o root -g wheel -m 755 "$PROJECT_DIR/pam/touchbridge-trust" "$TRUST_TOOL"
+for helper in pam-common.sh patch-pam.sh uninstall.sh; do
+    target="/Library/Security/TouchBridge/$helper"
+    if [ -e "$target" ] || [ -L "$target" ]; then "$TRUST_TOOL" check "$target" file; fi
+    install -o root -g wheel -m 644 "$SCRIPT_DIR/$helper" "$target"
+done
+"$TRUST_TOOL" check "$PAM_LIB" file
+"$TRUST_TOOL" check "$TRUST_TOOL" file
 info "Installed $PAM_LIB"
 
 # --- Create Directories ---
@@ -112,8 +134,13 @@ info "Created application support and log directories."
 # shellcheck source=pam-common.sh
 source "$SCRIPT_DIR/pam-common.sh"
 
-tb_enable_sudo "prompt"
-tb_enable_screensaver "prompt"
+if "$TRUST_TOOL" list "$ACTUAL_UID" >/dev/null 2>&1; then
+    tb_enable_sudo "prompt"
+    tb_enable_screensaver "prompt"
+else
+    warn "PAM stays disabled until you explicitly enroll and confirm phone/Mac fingerprints."
+    warn "Then activate: sudo bash /Library/Security/TouchBridge/patch-pam.sh"
+fi
 
 # --- Install LaunchAgent ---
 

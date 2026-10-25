@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/pam-common.sh"
 
 DAEMON_BIN="/usr/local/bin/touchbridged"
-PAM_LIB="/usr/local/lib/pam/pam_touchbridge.so"
+PAM_LIB="/Library/Security/TouchBridge/pam_touchbridge.so"
 LAUNCH_AGENT_LABEL="dev.touchbridge.daemon"
 
 # Colors
@@ -36,7 +36,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 ACTUAL_USER="${SUDO_USER:-$(whoami)}"
-ACTUAL_HOME=$(eval echo "~$ACTUAL_USER")
+ACTUAL_HOME=$(dscl . -read "/Users/$ACTUAL_USER" NFSHomeDirectory | sed 's/^NFSHomeDirectory: //')
 ACTUAL_UID=$(id -u "$ACTUAL_USER")
 LAUNCH_AGENT_PLIST="$ACTUAL_HOME/Library/LaunchAgents/dev.touchbridge.daemon.plist"
 
@@ -67,6 +67,7 @@ else
 fi
 
 if [ -f "$PAM_LIB" ]; then
+    "$TB_TRUST_TOOL" check "$PAM_LIB" file
     rm -f "$PAM_LIB"
     info "Removed $PAM_LIB"
 else
@@ -85,6 +86,7 @@ fi
 
 echo ""
 info "=== Uninstallation Complete ==="
+info "Root trust pins and touchbridge-trust were preserved for explicit review/revocation."
 echo ""
 echo "Note: User data at ~/Library/Application Support/TouchBridge/ was preserved."
 echo "      To remove it: rm -rf ~/Library/Application\\ Support/TouchBridge/"

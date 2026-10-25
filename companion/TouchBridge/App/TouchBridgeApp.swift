@@ -17,6 +17,7 @@ struct TouchBridgeApp: App {
 }
 
 /// Central app state observable by all views.
+@MainActor
 class AppState: ObservableObject {
     @Published var isPaired: Bool = false
     @Published var isConnected: Bool = false
@@ -30,6 +31,9 @@ class AppState: ObservableObject {
     /// Set when the user explicitly cancelled or denied a Face ID / biometric prompt.
     /// Keeps the auth sheet open so the user sees feedback instead of a silent dismiss.
     @Published var challengeDenied: Bool = false
+    @Published var unpairError: String?
+    @Published var unpairIncomplete: Bool = false
+    private var lifecycleGeneration: UInt64 = 0
 
     let coordinator: CompanionCoordinator
 
@@ -44,19 +48,30 @@ class AppState: ObservableObject {
         let coordinator = CompanionCoordinator()
         self.coordinator = coordinator
 
-        isPaired = UserDefaults.standard.string(forKey: "pairedMacID") != nil
+        unpairIncomplete = UserDefaults.standard.bool(forKey: "unpairIncomplete")
+        isPaired = UserDefaults.standard.string(forKey: "pairedMacID") != nil || unpairIncomplete
+        if unpairIncomplete {
+            statusMessage = "Authentication disabled — finish Unpair in Settings"
+        }
 
         coordinator.onConnectionChanged = { [weak self] connected in
+            let generation = self?.lifecycleGeneration
             DispatchQueue.main.async {
-                self?.isConnected = connected
-                self?.statusMessage = connected ? "Connected to Mac" : "Disconnected"
+                guard let self, self.lifecycleGeneration == generation,
+                      !self.unpairIncomplete else { return }
+                self.isConnected = connected
+                self.statusMessage = connected ? "Connected to Mac" : "Disconnected"
             }
         }
 
         coordinator.onChallengeReceived = { [weak self] info in
+            let generation = self?.lifecycleGeneration
             DispatchQueue.main.async {
+                guard let self, self.isPaired, !self.unpairIncomplete,
+                      self.lifecycleGeneration == generation else { return }
+                self.challengeDenied = false
                 let macName = UserDefaults.standard.string(forKey: "pairedMacName") ?? "Mac"
-                self?.pendingChallenge = PendingChallenge(
+                self.pendingChallenge = PendingChallenge(
                     reason: info,
                     macName: macName,
                     timestamp: Date()
@@ -65,23 +80,26 @@ class AppState: ObservableObject {
         }
 
         coordinator.onChallengeResult = { [weak self] challengeID, success, error in
+            let generation = self?.lifecycleGeneration
             DispatchQueue.main.async {
-                self?.challengeCount += 1
+                guard let self, self.isPaired, !self.unpairIncomplete,
+                      self.lifecycleGeneration == generation else { return }
+                self.challengeCount += 1
 
                 if case .keyInvalidated = error {
-                    self?.pendingChallenge = nil
-                    self?.keyInvalidated = true
-                    self?.lastChallenge = "Key invalidated — re-pair required"
+                    self.pendingChallenge = nil
+                    self.keyInvalidated = true
+                    self.lastChallenge = "Key invalidated — re-pair required"
                     UINotificationFeedbackGenerator().notificationOccurred(.error)
                 } else if case .biometricDenied = error {
                     // Keep the sheet open so the user sees the denial — they dismissed Face ID
                     // and would otherwise just see sudo silently ask for a password with no explanation.
-                    self?.challengeDenied = true
-                    self?.lastChallenge = "Denied"
+                    self.challengeDenied = true
+                    self.lastChallenge = "Denied"
                     UINotificationFeedbackGenerator().notificationOccurred(.error)
                 } else {
-                    self?.pendingChallenge = nil
-                    self?.lastChallenge = success
+                    self.pendingChallenge = nil
+                    self.lastChallenge = success
                         ? "Approved (\(challengeID.prefix(8))...)"
                         : "Denied"
                     UINotificationFeedbackGenerator().notificationOccurred(success ? .success : .error)
@@ -97,23 +115,42 @@ class AppState: ObservableObject {
             }
         }
 
-        if isPaired {
+        if isPaired && !unpairIncomplete {
             coordinator.startScanning()
         }
     }
 
-    func unpair() {
-        coordinator.disconnect()
-        UserDefaults.standard.removeObject(forKey: "pairedMacID")
-        UserDefaults.standard.removeObject(forKey: "pairedMacName")
-        isPaired = false
-        isConnected = false
-        statusMessage = "Not connected"
-        challengeCount = 0
-        lastChallenge = nil
-        keyInvalidated = false
+    func cancelChallenge() {
+        lifecycleGeneration &+= 1
+        coordinator.cancelCurrentChallenge()
+        pendingChallenge = nil
         challengeDenied = false
+        lastChallenge = "Cancelled"
     }
+
+    func unpair() {
+        lifecycleGeneration &+= 1
+        unpairIncomplete = true
+        // Stop displaying the pending request even if key revocation needs retrying.
+        pendingChallenge = nil
+        challengeDenied = false
+        isConnected = false
+        unpairError = nil
+
+        do {
+            try coordinator.unpair()
+            isPaired = false
+            unpairIncomplete = false
+            statusMessage = "Not connected"
+            challengeCount = 0
+            lastChallenge = nil
+            keyInvalidated = false
+        } catch {
+            statusMessage = "Authentication disabled — unpair incomplete"
+            unpairError = "The signing key could not be removed. Authentication is disabled. Try Unpair again. \(error.localizedDescription)"
+        }
+    }
+
 }
 
 // MARK: - Main Tab View
@@ -311,7 +348,7 @@ struct HomeView: View {
                 if appState.challengeCount > 0 {
                     HStack(spacing: 20) {
                         StatCard(
-                            title: "Authenticated",
+                            title: "Auth Requests",
                             value: "\(appState.challengeCount)",
                             icon: "checkmark.shield"
                         )
@@ -334,10 +371,11 @@ struct HomeView: View {
                         appState.statusMessage = "Scanning..."
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     } label: {
-                        Label("Reconnect", systemImage: "antenna.radiowaves.left.and.right")
+                        Label(appState.unpairIncomplete ? "Retry Unpair in Settings" : "Reconnect", systemImage: "antenna.radiowaves.left.and.right")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(appState.unpairIncomplete)
                     .padding(.horizontal)
                 }
 
@@ -351,11 +389,7 @@ struct HomeView: View {
                 macName: challenge.macName,
                 keyInvalidated: appState.keyInvalidated,
                 wasDenied: appState.challengeDenied,
-                onApprove: { appState.pendingChallenge = nil },
-                onDeny: {
-                    appState.challengeDenied = false
-                    appState.pendingChallenge = nil
-                }
+                onDeny: { appState.cancelChallenge() }
             )
             .interactiveDismissDisabled()
         }

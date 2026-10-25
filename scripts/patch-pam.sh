@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=pam-common.sh
 source "$SCRIPT_DIR/pam-common.sh"
 
-PAM_LIB="/usr/local/lib/pam/pam_touchbridge.so"
+PAM_LIB="/Library/Security/TouchBridge/pam_touchbridge.so"
 
 echo "=== TouchBridge PAM Activator ==="
 echo ""
@@ -32,6 +32,17 @@ if [ ! -f "$PAM_LIB" ]; then
     exit 1
 fi
 _tb_info "Found PAM module: $PAM_LIB"
+
+_tb_verify_install
+TARGET_UID=$(id -u "${SUDO_USER:-$(whoami)}")
+if ! "$TB_TRUST_TOOL" list "$TARGET_UID" >/dev/null; then
+    echo "Enroll confirmed Mac/phone public-key fingerprints for UID $TARGET_UID first."
+    exit 1
+fi
+
+# Retire legacy references before enabling the protected path.
+tb_disable_sudo
+tb_disable_screensaver
 
 tb_enable_sudo "prompt"
 tb_enable_screensaver "prompt"

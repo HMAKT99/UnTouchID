@@ -4,9 +4,8 @@ import Security
 @testable import TouchBridgeCore
 @testable import TouchBridgeProtocol
 
-/// Simulates the C PAM module's behavior: connect to Unix socket,
-/// send JSON request, parse JSON response.
-private func simulatePAMAuth(
+/// Diagnostic transport fixture; native PAM proof verification has a separate C/ObjC harness.
+private func simulateDiagnosticAuth(
     socketPath: String,
     user: String = "testuser",
     service: String = "sudo",
@@ -35,8 +34,8 @@ private func simulatePAMAuth(
     var tv = timeval(tv_sec: __darwin_time_t(timeout), tv_usec: 0)
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
-    // Build JSON request (mirrors pam_touchbridge.c behavior)
-    let request = "{\"action\":\"authenticate\",\"user\":\"\(user)\",\"service\":\"\(service)\",\"pid\":\(getpid())}\n"
+    // Diagnostic success cannot authorize native PAM.
+    let request = "{\"action\":\"diagnostic_authenticate\",\"user\":\"\(user)\",\"service\":\"\(service)\",\"pid\":\(getpid())}\n"
     let requestData = request.data(using: .utf8)!
     _ = requestData.withUnsafeBytes { ptr in
         send(fd, ptr.baseAddress!, ptr.count, 0)
@@ -50,7 +49,7 @@ private func simulatePAMAuth(
     buffer[bytesRead] = 0
     let responseStr = String(cString: buffer)
 
-    // Parse like the C module does: simple string search
+    // Diagnostic result only; never a privileged proof verifier.
     let success = responseStr.contains("\"result\":\"success\"")
 
     // Extract reason if present
@@ -87,7 +86,7 @@ private func makeShortSocketPath() -> String {
 
     try await Task.sleep(nanoseconds: 100_000_000)
 
-    let (success, reason) = try simulatePAMAuth(socketPath: socketPath)
+    let (success, reason) = try simulateDiagnosticAuth(socketPath: socketPath)
     #expect(!success)
     #expect(reason == "no_companion_connected")
 }
@@ -105,7 +104,7 @@ private func makeShortSocketPath() -> String {
 
     try await Task.sleep(nanoseconds: 100_000_000)
 
-    let (success, _) = try simulatePAMAuth(socketPath: socketPath, service: "sudo")
+    let (success, _) = try simulateDiagnosticAuth(socketPath: socketPath, service: "sudo")
     #expect(success)
     #expect(handler.lastRequest?.service == "sudo")
 }
@@ -123,7 +122,7 @@ private func makeShortSocketPath() -> String {
 
     try await Task.sleep(nanoseconds: 100_000_000)
 
-    _ = try simulatePAMAuth(socketPath: socketPath, user: "arun", service: "screensaver")
+    _ = try simulateDiagnosticAuth(socketPath: socketPath, user: "arun", service: "screensaver")
 
     #expect(handler.lastRequest?.user == "arun")
     #expect(handler.lastRequest?.service == "screensaver")
@@ -132,7 +131,7 @@ private func makeShortSocketPath() -> String {
 @Test func pamAuthConnectionRefusedWhenNoDaemon() throws {
     // Try connecting to a non-existent socket — should fail gracefully
     let socketPath = "/tmp/tb-nonexistent-\(UUID().uuidString.prefix(8)).sock"
-    let result = try? simulatePAMAuth(socketPath: socketPath)
+    let result = try? simulateDiagnosticAuth(socketPath: socketPath)
 
     // Either throws or returns failure
     if let result {
@@ -156,7 +155,7 @@ private func makeShortSocketPath() -> String {
 
     // Simulate multiple sudo calls in sequence
     for i in 0..<5 {
-        let (success, _) = try simulatePAMAuth(
+        let (success, _) = try simulateDiagnosticAuth(
             socketPath: socketPath,
             user: "user\(i)",
             service: "sudo"

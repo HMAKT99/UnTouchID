@@ -1,31 +1,31 @@
-# TouchBridge Limitations
+# Limits and acceptance boundaries
 
-## Cannot Do
+V2 integrates macOS and the iPhone companion. V1 Android, Watch, Wear OS, web,
+simulator and browser diagnostics cannot authorize v2 PAM. The Authorization
+Plugin fails closed. Old pairing must be replaced with QR-pinned v2 pairing and
+explicit administrator enrollment.
 
-### Keychain items with `kSecAccessControlBiometryCurrentSet`
-macOS Keychain items sealed with biometric ACLs require the local Secure Enclave to unwrap them. This is a hardware-level restriction — no software can bypass it. TouchBridge cannot unlock these items.
+FileVault preboot, Apple Pay and hardware-bound Mac Keychain remain outside
+scope. Bonjour fallback is not implemented. The phone pairs with one Mac at a
+time. Secure Enclave/Face ID, physical BLE, background behavior and permissions
+require a signed App and real-device acceptance.
 
-### Sandboxed App Store apps calling LAContext
-Third-party apps distributed via the App Store that call `LAContext.evaluatePolicy` internally are sandboxed. TouchBridge cannot intercept these calls due to SIP and sandbox restrictions.
+Module/trust ancestors must be root-owned, not group/other writable or symlinks.
+Extended ACL entries are conservatively rejected. Do not disable SIP or weaken
+shared directories to bypass refusal.
 
-### Apple Pay
-Apple Pay uses a dedicated Secure Element on the Mac (or Watch) and cannot be delegated.
+Unpair cancels signing/reconnect/late callbacks; cleanup failure stays disabled
+across restart and Settings permits retry. Mac root-pin removal is a separate
+administrator step.
 
-### FileVault unlock
-FileVault decryption happens before the OS boots. No user-level daemon is running at that point.
+Auto-lock arms only after a verified companion has been present and the last
+verified device leaves. Actual Lock Screen requests require positive lock-state
+readback. Missing mechanisms, permission denials or unconfirmed state are errors,
+not locking evidence.
 
-## Design Tradeoffs
+Generic compilation and software-key/socket fixtures do not establish physical
+BLE, biometric, privileged installation, migration/recovery, password fallback,
+actual screen lock or user acceptance. Logs remain user controlled; simulated
+records are not physical-device receipts.
 
-### BLE range
-BLE range is typically 10-30 meters. The RSSI proximity gate (default -75 dBm) limits effective range to ~5 meters. This means your iPhone must be nearby.
-
-### Background BLE on iOS
-iOS aggressively kills background BLE connections. TouchBridge uses `CBCentralManagerOptionRestoreIdentifierKey` for state restoration, but there may be delays when the app is in the background.
-
-### Multi-device: Mac side vs phone side
-The Mac daemon supports multiple paired companion devices — any paired, connected device can approve a request (first valid response wins; every connected device is notified). The iOS app, however, currently pairs with a single Mac at a time; pairing with a second Mac replaces the first. Multi-Mac support on the phone is planned.
-
-### Other scenarios worth knowing
-- **SSH sessions**: `sudo` inside an SSH session goes through the same PAM stack, so the approval prompt appears on your phone even though you're remote. If your phone isn't near the Mac (BLE range), the request times out and falls back to password.
-- **iPad**: the companion app targets iPhone; iPad is untested as a companion device.
-- **Locked phone**: approval requires unlocking the phone with Face ID/Touch ID — that unlock is the biometric gate. A locked, unattended phone cannot silently approve anything.
+Verified presence has an 8-second monotonic lease, refreshed by one-use encrypted heartbeat challenges (normally every 2 seconds). Missing or replayed replies cannot preserve a ghost session; expiry removes it and publishes absence in state-change order. This establishes authenticated liveness, not cryptographic distance bounding: a live bidirectional relay to an online phone can still extend apparent physical range. Native background/BLE behavior must be verified before relying on auto-lock.

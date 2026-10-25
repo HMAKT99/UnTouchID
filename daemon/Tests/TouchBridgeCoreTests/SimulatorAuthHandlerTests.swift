@@ -3,7 +3,9 @@ import Foundation
 @testable import TouchBridgeCore
 
 @Test func simulatorAutoApproveReturnsSuccess() async {
-    let handler = SimulatorAuthHandler(mode: .autoApprove)
+    let logDir = FileManager.default.temporaryDirectory.appendingPathComponent("tb-sim-test-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: logDir) }
+    let handler = SimulatorAuthHandler(mode: .autoApprove, auditLog: AuditLog(logDirectory: logDir))
 
     let (success, reason) = await handler.authenticateFromPAM(
         user: "testuser",
@@ -17,7 +19,9 @@ import Foundation
 }
 
 @Test func simulatorAutoDenyReturnsFailure() async {
-    let handler = SimulatorAuthHandler(mode: .autoDeny)
+    let logDir = FileManager.default.temporaryDirectory.appendingPathComponent("tb-sim-test-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: logDir) }
+    let handler = SimulatorAuthHandler(mode: .autoDeny, auditLog: AuditLog(logDirectory: logDir))
 
     let (success, reason) = await handler.authenticateFromPAM(
         user: "testuser",
@@ -62,7 +66,9 @@ import Foundation
 }
 
 @Test func simulatorMultipleAuthsAllSucceed() async {
-    let handler = SimulatorAuthHandler(mode: .autoApprove)
+    let logDir = FileManager.default.temporaryDirectory.appendingPathComponent("tb-sim-test-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: logDir) }
+    let handler = SimulatorAuthHandler(mode: .autoApprove, auditLog: AuditLog(logDirectory: logDir))
 
     for i in 0..<5 {
         let (success, _) = await handler.authenticateFromPAM(
@@ -79,14 +85,16 @@ import Foundation
     let socketPath = "/tmp/tb-sim-\(UUID().uuidString.prefix(8)).sock"
     defer { unlink(socketPath) }
 
-    let handler = SimulatorAuthHandler(mode: .autoApprove)
+    let logDir = FileManager.default.temporaryDirectory.appendingPathComponent("tb-sim-test-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: logDir) }
+    let handler = SimulatorAuthHandler(mode: .autoApprove, auditLog: AuditLog(logDirectory: logDir))
     let server = SocketServer(authHandler: handler, socketPath: socketPath)
     try server.start()
     defer { server.stop() }
 
     try await Task.sleep(nanoseconds: 100_000_000)
 
-    // Simulate PAM module connecting
+    // Connect a diagnostic client; this cannot authorize native PAM.
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     defer { close(fd) }
 
@@ -110,7 +118,7 @@ import Foundation
     var tv = timeval(tv_sec: 5, tv_usec: 0)
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
-    let request = "{\"action\":\"authenticate\",\"user\":\"arun\",\"service\":\"sudo\",\"pid\":42}\n"
+    let request = "{\"action\":\"diagnostic_authenticate\",\"user\":\"arun\",\"service\":\"sudo\",\"pid\":42}\n"
     _ = request.data(using: .utf8)!.withUnsafeBytes { ptr in
         send(fd, ptr.baseAddress!, ptr.count, 0)
     }

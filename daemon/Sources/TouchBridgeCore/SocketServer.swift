@@ -7,12 +7,16 @@ public struct PAMRequest: Codable, Sendable {
     public let user: String
     public let service: String
     public let pid: Int
+    public let evidenceVersion: Int?
+    public let challenge: Data?
 
-    public init(action: String, user: String, service: String, pid: Int) {
+    public init(action: String, user: String, service: String, pid: Int, evidenceVersion: Int? = nil, challenge: Data? = nil) {
         self.action = action
         self.user = user
         self.service = service
         self.pid = pid
+        self.evidenceVersion = evidenceVersion
+        self.challenge = challenge
     }
 }
 
@@ -20,10 +24,12 @@ public struct PAMRequest: Codable, Sendable {
 public struct PAMResponse: Codable, Sendable {
     public let result: String
     public let reason: String?
+    public let proof: PAMProof?
 
-    public init(result: String, reason: String? = nil) {
+    public init(result: String, reason: String? = nil, proof: PAMProof? = nil) {
         self.result = result
         self.reason = reason
+        self.proof = proof
     }
 
     public static let success = PAMResponse(result: "success")
@@ -36,6 +42,15 @@ public struct PAMResponse: Codable, Sendable {
 /// Protocol for handling PAM authentication requests — enables testing without DaemonCoordinator.
 public protocol PAMAuthHandler: AnyObject, Sendable {
     func authenticateFromPAM(user: String, service: String, pid: Int, timeout: TimeInterval) async -> (success: Bool, reason: String?)
+}
+
+public struct PAMProof: Codable, Sendable, Equatable {
+    public let deviceID: String
+    public let signature: Data
+    public init(deviceID: String, signature: Data) { self.deviceID = deviceID; self.signature = signature }
+}
+public protocol PAMProofAuthHandler: AnyObject, Sendable {
+    func authenticateProof(challenge: Data, timeout: TimeInterval) async -> PAMProof?
 }
 
 /// Unix domain socket server for PAM module communication.
@@ -51,18 +66,21 @@ public final class SocketServer: @unchecked Sendable {
 
     private var serverFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
-    private let queue = DispatchQueue(label: "dev.touchbridge.socket", qos: .userInitiated)
+    private let queue: DispatchQueue
+    private let lifecycleLock = NSLock()
 
     /// Whether the socket server is currently listening.
-    public private(set) var isListening: Bool = false
+    public var isListening: Bool { lifecycleLock.withLock { serverFD >= 0 } }
 
     public init(
         authHandler: PAMAuthHandler,
         policyEngine: PolicyEngine = PolicyEngine(),
-        socketPath: String? = nil
+        socketPath: String? = nil,
+        eventQueue: DispatchQueue = DispatchQueue(label: "dev.touchbridge.socket", qos: .userInitiated)
     ) {
         self.authHandler = authHandler
         self.policyEngine = policyEngine
+        self.queue = eventQueue
 
         if let path = socketPath {
             self.socketPath = path
@@ -74,6 +92,9 @@ public final class SocketServer: @unchecked Sendable {
 
     /// Start listening on the Unix domain socket.
     public func start() throws {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        guard serverFD < 0 else { return }
         // Ensure directory exists
         let dir = (socketPath as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -128,48 +149,48 @@ public final class SocketServer: @unchecked Sendable {
         }
 
         // Accept connections via GCD
-        let source = DispatchSource.makeReadSource(fileDescriptor: serverFD, queue: queue)
+        let listenerFD = serverFD
+        let source = DispatchSource.makeReadSource(fileDescriptor: listenerFD, queue: queue)
         source.setEventHandler { [weak self] in
-            self?.acceptConnection()
+            self?.acceptConnection(listenerFD: listenerFD)
         }
-        source.setCancelHandler { [weak self] in
-            if let fd = self?.serverFD, fd >= 0 {
-                close(fd)
-                self?.serverFD = -1
-            }
+        source.setCancelHandler {
+            // The source exclusively owns this descriptor until cancellation
+            // completes. A delayed callback must never touch a newer listener.
+            close(listenerFD)
         }
         acceptSource = source
         source.resume()
 
-        isListening = true
         logger.info("Socket server listening on \(self.socketPath)")
     }
 
     /// Stop the socket server.
     public func stop() {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        guard acceptSource != nil else { return }
         acceptSource?.cancel()
         acceptSource = nil
-        if serverFD >= 0 {
-            close(serverFD)
-            serverFD = -1
-        }
+        serverFD = -1
         unlink(socketPath)
-        isListening = false
         logger.info("Socket server stopped")
     }
+
+    deinit { stop() }
 
     /// The path of the Unix domain socket.
     public var path: String { socketPath }
 
     // MARK: - Private
 
-    private func acceptConnection() {
+    private func acceptConnection(listenerFD: Int32) {
         var clientAddr = sockaddr_un()
         var addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
 
         let clientFD = withUnsafeMutablePointer(to: &clientAddr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                accept(serverFD, sockPtr, &addrLen)
+                accept(listenerFD, sockPtr, &addrLen)
             }
         }
 
@@ -178,6 +199,8 @@ public final class SocketServer: @unchecked Sendable {
             return
         }
 
+        var noSigPipe: Int32 = 1
+        setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
         // Handle each connection on a separate task
         Task {
             await handleConnection(fd: clientFD)
@@ -187,23 +210,25 @@ public final class SocketServer: @unchecked Sendable {
     private func handleConnection(fd: Int32) async {
         defer { close(fd) }
 
-        // Read request (max 4KB, single line)
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        let bytesRead = recv(fd, &buffer, buffer.count - 1, 0)
-
-        guard bytesRead > 0 else {
-            logger.warning("Empty read from PAM client")
-            return
+        // Newline framing, bounded reads and a socket deadline reject truncated input.
+        var socketTimeout = timeval(tv_sec: 3, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &socketTimeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &socketTimeout, socklen_t(MemoryLayout<timeval>.size))
+        var requestData = Data()
+        var complete = false
+        let readDeadline = Date().addingTimeInterval(3)
+        while requestData.count < 4096, Date() < readDeadline {
+            var chunk = [UInt8](repeating: 0, count: min(512, 4096 - requestData.count))
+            let count = recv(fd, &chunk, chunk.count, 0)
+            if count < 0 && errno == EINTR { continue }
+            guard count > 0 else { break }
+            if let newline = chunk[..<count].firstIndex(of: 10) {
+                guard newline == count - 1 else { sendResponse(fd: fd, response: .failure("invalid_frame")); return }
+                requestData.append(contentsOf: chunk[..<newline]); complete = true; break
+            }
+            requestData.append(contentsOf: chunk[..<count])
         }
-
-        buffer[bytesRead] = 0
-        let requestString = String(cString: buffer)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let requestData = requestString.data(using: .utf8) else {
-            sendResponse(fd: fd, response: .failure("invalid_request"))
-            return
-        }
+        guard complete, !requestData.isEmpty else { sendResponse(fd: fd, response: .failure("incomplete_request")); return }
 
         // Parse request
         let request: PAMRequest
@@ -215,23 +240,30 @@ public final class SocketServer: @unchecked Sendable {
             return
         }
 
-        guard request.action == "authenticate" else {
+        guard request.action == "authenticate" || request.action == "diagnostic_authenticate" else {
             sendResponse(fd: fd, response: .failure("unknown_action"))
             return
         }
 
         logger.info("PAM auth request: user=\(request.user) service=\(request.service) pid=\(request.pid)")
 
-        // Dispatch to auth handler with timeout from policy
         let timeout = policyEngine.authTimeout()
-        let (success, reason) = await authHandler.authenticateFromPAM(
-            user: request.user,
-            service: request.service,
-            pid: request.pid,
-            timeout: timeout
-        )
-
-        let response = success ? PAMResponse.success : PAMResponse.failure(reason ?? "authentication_failed")
+        let response: PAMResponse
+        if request.action == "authenticate" {
+            guard request.evidenceVersion == 2, let challenge = request.challenge,
+                  let handler = authHandler as? PAMProofAuthHandler else {
+                sendResponse(fd: fd, response: .failure("evidence_v2_required")); return
+            }
+            if let proof = await handler.authenticateProof(challenge: challenge, timeout: timeout) {
+                response = PAMResponse(result: "success", proof: proof)
+            } else { response = .failure("invalid_or_missing_proof") }
+        } else {
+            guard request.evidenceVersion == nil, request.challenge == nil else {
+                sendResponse(fd: fd, response: .failure("diagnostic_evidence_forbidden")); return
+            }
+            let (success, reason) = await authHandler.authenticateFromPAM(user: request.user, service: request.service, pid: request.pid, timeout: timeout)
+            response = success ? PAMResponse.success : .failure(reason ?? "authentication_failed")
+        }
         sendResponse(fd: fd, response: response)
 
         logger.info("PAM auth result: user=\(request.user) service=\(request.service) result=\(response.result)")
@@ -244,7 +276,12 @@ public final class SocketServer: @unchecked Sendable {
             var data = try encoder.encode(response)
             data.append(contentsOf: "\n".utf8)
             data.withUnsafeBytes { ptr in
-                _ = send(fd, ptr.baseAddress!, ptr.count, 0)
+                var offset = 0
+                while offset < ptr.count {
+                    let count = send(fd, ptr.baseAddress!.advanced(by: offset), ptr.count - offset, 0)
+                    if count < 0 && errno == EINTR { continue }
+                    guard count > 0 else { break }; offset += count
+                }
             }
         } catch {
             logger.error("Failed to encode PAM response: \(error.localizedDescription)")

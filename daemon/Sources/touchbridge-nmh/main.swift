@@ -4,7 +4,8 @@ import TouchBridgeCore
 /// TouchBridge Native Messaging Host
 ///
 /// Bridges browser extensions (Safari/Chrome) to the TouchBridge daemon
-/// via the Unix domain socket. Reads JSON messages from stdin (Chrome NMH protocol:
+/// via the diagnostic socket API, not privileged PAM verification.
+/// Reads JSON messages from stdin (Chrome NMH protocol:
 /// 4-byte length prefix + JSON), writes responses back to stdout.
 
 @main
@@ -85,6 +86,9 @@ struct NativeMessagingHost {
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
+        guard socketPath.utf8.count < MemoryLayout.size(ofValue: addr.sun_path) else {
+            return ["result": "failure", "reason": "socket_path_too_long"]
+        }
         socketPath.withCString { cstr in
             withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
                 ptr.withMemoryRebound(to: CChar.self, capacity: Int(strlen(cstr)) + 1) { dest in
@@ -106,8 +110,11 @@ struct NativeMessagingHost {
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
         let user = NSUserName()
-        let request = "{\"action\":\"authenticate\",\"user\":\"\(user)\",\"service\":\"\(service)\",\"pid\":\(getpid())}\n"
-        let requestData = request.data(using: .utf8)!
+        let request = PAMRequest(action: "diagnostic_authenticate", user: user, service: service, pid: Int(getpid()))
+        guard var requestData = try? JSONEncoder().encode(request) else {
+            return ["result": "failure", "reason": "encoding_failed"]
+        }
+        requestData.append(10)
         _ = requestData.withUnsafeBytes { ptr in
             send(fd, ptr.baseAddress!, ptr.count, 0)
         }
@@ -119,8 +126,10 @@ struct NativeMessagingHost {
         }
 
         buffer[received] = 0
-        let response = String(cString: buffer)
-        if response.contains("\"result\":\"success\"") {
+        guard let response = try? JSONDecoder().decode(PAMResponse.self, from: Data(buffer[..<received])) else {
+            return ["result": "failure", "reason": "invalid_response"]
+        }
+        if response.result == "success", response.proof == nil {
             return ["result": "success"]
         }
         return ["result": "failure", "reason": "denied"]

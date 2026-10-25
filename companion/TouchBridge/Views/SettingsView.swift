@@ -6,6 +6,15 @@ struct SettingsView: View {
 
     var body: some View {
         List {
+            if appState.unpairIncomplete {
+                Section {
+                    Label("Unpair incomplete", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Authentication is disabled. Retry Unpair below to finish removing the signing key.")
+                        .font(.subheadline)
+                }
+            }
+
             if appState.keyInvalidated {
                 Section {
                     HStack(spacing: 12) {
@@ -49,6 +58,27 @@ struct SettingsView: View {
                 LabeledContent("BLE", value: appState.coordinator.isConnected ? "Active" : "Idle")
             }
 
+            if !appState.unpairIncomplete {
+                Section {
+                    TrustValueRow(title: "Device ID", value: appState.coordinator.pairedDeviceID)
+                    if let fingerprint = appState.coordinator.pairedMacFingerprint {
+                        TrustValueRow(title: "Mac fingerprint (SHA-256)", value: fingerprint)
+                    }
+                    if let fingerprint = appState.coordinator.signingFingerprint {
+                        TrustValueRow(title: "iPhone signing fingerprint (SHA-256)", value: fingerprint)
+                    }
+                    if let publicKey = appState.coordinator.pairedSigningPublicKey {
+                        DisclosureGroup("iPhone public key") {
+                            TrustValueRow(title: "Public key (Base64)", value: publicKey.base64EncodedString())
+                        }
+                    }
+                } header: {
+                    Text("Trust verification")
+                } footer: {
+                    Text("Compare these values with the enrollment details on your Mac before trusting this device.")
+                }
+            }
+
             Section("About") {
                 LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
                 LabeledContent("Build", value: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")
@@ -64,7 +94,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Button("Unpair This Device", role: .destructive) {
+                Button(appState.unpairIncomplete ? "Retry Unpair" : "Unpair This Device", role: .destructive) {
                     showUnpairConfirm = true
                 }
             }
@@ -79,7 +109,33 @@ struct SettingsView: View {
                 appState.unpair()
             }
         } message: {
-            Text("You will need to pair again to use TouchBridge.")
+            Text("This removes this iPhone’s signing key. You will need to pair again. Also remove this device from your Mac’s trusted devices.")
         }
+        .alert("Could not finish unpairing", isPresented: Binding(
+            get: { appState.unpairError != nil },
+            set: { if !$0 { appState.unpairError = nil } }
+        )) {
+            Button("OK", role: .cancel) { appState.unpairError = nil }
+        } message: {
+            Text(appState.unpairError ?? "")
+        }
+    }
+}
+
+private struct TrustValueRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline)
+            Text(value)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 4)
     }
 }

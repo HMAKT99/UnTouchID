@@ -21,6 +21,8 @@ targets:
       - path: TouchBridge
         excludes:
           - "Resources/Info.plist"
+          - "Core/Constants.swift"
+      - path: ../protocol/Sources/TouchBridgeProtocol
     resources:
       - path: TouchBridge/Assets.xcassets
       - path: TouchBridge/Resources
@@ -70,6 +72,22 @@ targets:
       - path: TouchBridgeWatch
     settings:
       base:
+        GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: dev.touchbridge.companion.watchapp
         INFOPLIST_KEY_WKCompanionAppBundleIdentifier: dev.touchbridge.companion
         SWIFT_VERSION: "5.9"
+
+  TouchBridgeTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: TouchBridgeTests
+    dependencies:
+      - target: TouchBridge
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.touchbridge.companion.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TouchBridge.app/TouchBridge"
+        BUNDLE_LOADER: "$(TEST_HOST)"

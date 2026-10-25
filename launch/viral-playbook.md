@@ -1,3 +1,5 @@
+> Archived v1 launch plan. Commands/support claims below are historical and must not be used for v2 installation or security acceptance. Use docs/setup.md.
+
 # GitHub Viral Playbook — How TouchBridge Got Traction
 
 ## What Worked (Copy This for Any Repo)

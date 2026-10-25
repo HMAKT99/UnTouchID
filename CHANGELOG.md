@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+- PAM verifies fresh canonical phone signatures against root-enrolled keys;
+  untrusted daemon success strings and simulator/web results cannot authorize it.
+- Privileged module/trust move to root-controlled Library/Security/TouchBridge;
+  verify ancestors, symlinks, write permissions and ACLs. Enrollment explicitly
+  confirms fingerprints; migration removes hooks before replacing modules.
+- QR-pinned Mac identity authenticates ECDH; pairing and reconnect require
+  encrypted, session-bound key possession. Tokens are consumed atomically.
+- Phone signs complete user/service/identity/expiry context, not only a nonce.
+- Verified companion lifecycle drives auto-lock with actual lock-state readback,
+  ordered publications and fresh encrypted heartbeat leases; stale relay sessions expire.
+- Menu activation/uninstall use only verified root-controlled v2 helper paths.
+- Unpair cancels reconnect and pending/late signing; failed cleanup persists a
+  disabled state and supports retry. Watch/plugin cannot approve unsigned data.
+
+### Changed
+- Breaking protocol v2 migration: rebuild both ends, re-pair, and explicitly
+  enroll verified root trust. No downgrade to v1 or boolean PAM approval.
+- Android/Watch/browser/web/simulator paths are diagnostic or unsupported for
+  privileged v2; native physical-device acceptance remains a separate gate.
+- Isolate simulator test logs and distinguish diagnostic fixtures from native PAM.
+- Serialize permanent identity and paired-record Keychain operations at their
+  shared native boundary, without retries; fix socket listener descriptor ownership
+  across cancellation/restart. Regression tests reproduce both failures.
+- Disable Authorization Plugin creation at its C entry until a privileged v2
+  verifier exists. The source cask refuses the old package until v2 release
+  metadata is available; source installation remains supported.
+
 ## [1.1.2] — 2026-07-17
 
 ### Changed

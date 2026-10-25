@@ -20,13 +20,15 @@ public struct Challenge: Sendable {
     public let issuedAt: Date
     public let expiresAt: Date
     public let deviceID: String
+    public let sessionID: UUID?
 
-    public init(id: UUID, nonce: Data, issuedAt: Date, expiresAt: Date, deviceID: String) {
+    public init(id: UUID, nonce: Data, issuedAt: Date, expiresAt: Date, deviceID: String, sessionID: UUID? = nil) {
         self.id = id
         self.nonce = nonce
         self.issuedAt = issuedAt
         self.expiresAt = expiresAt
         self.deviceID = deviceID
+        self.sessionID = sessionID
     }
 }
 
@@ -69,6 +71,8 @@ public actor ChallengeManager {
     ///
     /// Generates a 32-byte cryptographic nonce with a 10-second expiry window.
     public func issue(for deviceID: String) throws -> Challenge {
+        pruneExpired()
+        guard pending.count < 512 else { throw ProtocolSecurityError.malformed }
         var nonceBytes = [UInt8](repeating: 0, count: 32)
         let status = SecRandomCopyBytes(kSecRandomDefault, nonceBytes.count, &nonceBytes)
         guard status == errSecSuccess else {
@@ -88,28 +92,45 @@ public actor ChallengeManager {
         return challenge
     }
 
+    /// Retain immutable canonical evidence and bind it to the authenticated BLE session.
+    public func issue(for deviceID: String, authorization: Data, sessionID: UUID) throws -> Challenge {
+        pruneExpired()
+        guard pending.count < 512 else { throw ProtocolSecurityError.malformed }
+        let payload = try AuthorizationPayload.parse(authorization)
+        let now = timeProvider.now()
+        guard payload.expiry > UInt64(now.timeIntervalSince1970) else { throw ProtocolSecurityError.expired }
+        let challenge = Challenge(id: UUID(), nonce: authorization, issuedAt: now, expiresAt: Date(timeIntervalSince1970: TimeInterval(payload.expiry)), deviceID: deviceID, sessionID: sessionID)
+        pending[challenge.id] = challenge
+        return challenge
+    }
+    public func cancel(_ id: UUID) { pending.removeValue(forKey: id) }
+
     /// Verify a signed response to a previously issued challenge.
     ///
     /// Checks: challenge exists, not expired, nonce not replayed, ECDSA signature valid.
     public func verify(
         challengeID: UUID,
         signature: Data,
-        publicKey: SecKey
+        publicKey: SecKey,
+        expectedDeviceID: String? = nil,
+        expectedSessionID: UUID? = nil
     ) -> ChallengeResult {
-        guard let challenge = pending.removeValue(forKey: challengeID) else {
+        guard let challenge = pending[challengeID] else {
             return .unknownChallenge
         }
 
+        guard expectedDeviceID == nil || expectedDeviceID == challenge.deviceID, expectedSessionID == nil || expectedSessionID == challenge.sessionID else { return .invalidSignature }
+        pending.removeValue(forKey: challengeID)
         let now = timeProvider.now()
 
         // Check expiry
-        if now > challenge.expiresAt {
+        if now >= challenge.expiresAt {
             return .expired
         }
 
         // Check replay
         pruneExpiredNonces()
-        if seenNonces[challenge.nonce] != nil {
+        if seenNonces[challenge.nonce] != nil || seenNonces.count >= 4096 {
             return .replayDetected
         }
 

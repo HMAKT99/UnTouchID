@@ -36,6 +36,9 @@ struct Serve: ParsableCommand {
     var autoLock: Bool = false
 
     func run() throws {
+        guard !autoLock || !(simulator || interactive || web) else {
+            throw ValidationError("--auto-lock requires verified BLE companions and cannot be combined with diagnostic modes.")
+        }
         if simulator || interactive {
             try runSimulatorMode()
         } else if web {
@@ -125,23 +128,25 @@ struct Serve: ParsableCommand {
         let policyEngine = PolicyEngine()
         let coordinator = DaemonCoordinator(rssiThreshold: rssiThreshold, serviceUUID: config.serviceUUID)
 
-        // Proximity auto-lock
         var proximityMonitor: ProximityMonitor?
         if autoLock {
             let monitor = ProximityMonitor(rssiThreshold: rssiThreshold - 5)
+            monitor.onLockResult = { result in
+                switch result {
+                case .success:
+                    print("Proximity auto-lock: session lock confirmed")
+                case .failure(let error):
+                    print("Proximity auto-lock FAILED: \(error.localizedDescription)")
+                }
+            }
+            coordinator.onVerifiedCompanionCountChanged = { count in
+                monitor.verifiedCompanionCountChanged(count)
+            }
             monitor.enable()
-            monitor.onShouldLock = {
-                print("Proximity auto-lock: locking screen")
-            }
             proximityMonitor = monitor
-
-            coordinator.onChallengeResult = { challengeID, result, deviceID in
-                print("Challenge \(challengeID): \(result) (device: \(deviceID ?? "unknown"))")
-            }
-        } else {
-            coordinator.onChallengeResult = { challengeID, result, deviceID in
-                print("Challenge \(challengeID): \(result) (device: \(deviceID ?? "unknown"))")
-            }
+        }
+        coordinator.onChallengeResult = { challengeID, result, deviceID in
+            print("Challenge \(challengeID): \(result) (device: \(deviceID ?? "unknown"))")
         }
 
         coordinator.onPairingComplete = { device in

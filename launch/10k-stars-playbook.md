@@ -1,3 +1,5 @@
+> Archived v1 launch plan. Commands/support claims below are historical and must not be used for v2 installation or security acceptance. Use docs/setup.md.
+
 # TouchBridge — Path to 10K Stars
 
 ## Current: 99 stars (3 days old)

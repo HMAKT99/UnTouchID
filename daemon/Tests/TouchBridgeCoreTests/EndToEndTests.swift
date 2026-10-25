@@ -5,7 +5,7 @@ import CryptoKit
 @testable import TouchBridgeCore
 @testable import TouchBridgeProtocol
 
-/// Full end-to-end test simulating the entire PAM → Socket → Challenge → Crypto pipeline.
+/// Isolated diagnostic socket/crypto fixture, not native PAM or iPhone acceptance.
 ///
 /// This test simulates:
 /// 1. PAM module connects to daemon socket
@@ -138,7 +138,7 @@ private func pamConnect(socketPath: String, user: String, service: String) throw
     var tv = timeval(tv_sec: 10, tv_usec: 0)
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
-    let request = "{\"action\":\"authenticate\",\"user\":\"\(user)\",\"service\":\"\(service)\",\"pid\":\(getpid())}\n"
+    let request = "{\"action\":\"diagnostic_authenticate\",\"user\":\"\(user)\",\"service\":\"\(service)\",\"pid\":\(getpid())}\n"
     _ = request.data(using: .utf8)!.withUnsafeBytes { ptr in
         send(fd, ptr.baseAddress!, ptr.count, 0)
     }

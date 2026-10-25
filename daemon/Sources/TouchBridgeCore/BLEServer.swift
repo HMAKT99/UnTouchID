@@ -104,6 +104,10 @@ public class BLEServer: NSObject, BLEServerInterface {
     // Connected centrals
     private var connectedCentrals: [UUID: ConnectedCentral] = [:]
 
+    private struct QueuedFrame { let central: CBCentral; let characteristic: CBMutableCharacteristic; let data: Data }
+    private var outbound: [QueuedFrame] = []
+    private var assemblers: [String: BLEReassembler] = [:]
+
     // RSSI proximity gate
     private let rssiThreshold: Int
 
@@ -161,6 +165,7 @@ public class BLEServer: NSObject, BLEServerInterface {
 
     /// Send an encrypted challenge to a specific connected central.
     public func sendChallenge(_ data: Data, to centralID: UUID) -> Bool {
+        if !Thread.isMainThread { return DispatchQueue.main.sync { self.sendChallenge(data, to: centralID) } }
         guard let info = connectedCentrals[centralID],
               info.subscribedToChallenge,
               let char = challengeChar else {
@@ -168,48 +173,31 @@ public class BLEServer: NSObject, BLEServerInterface {
             return false
         }
 
-        let sent = peripheralManager.updateValue(
-            data,
-            for: char,
-            onSubscribedCentrals: [info.central]
-        )
-
-        if !sent {
-            logger.warning("Challenge notification queued (transmit queue full)")
-        }
-        return sent
+        return sendFramed(data, characteristic: char, central: info.central)
     }
-
-    /// Send pairing data to a specific connected central.
     public func sendPairingData(_ data: Data, to centralID: UUID) -> Bool {
-        guard let info = connectedCentrals[centralID],
-              info.subscribedToPairing,
-              let char = pairingChar else {
-            logger.warning("Cannot send pairing data: central \(centralID) not subscribed")
-            return false
-        }
-
-        return peripheralManager.updateValue(
-            data,
-            for: char,
-            onSubscribedCentrals: [info.central]
-        )
+        if !Thread.isMainThread { return DispatchQueue.main.sync { self.sendPairingData(data, to: centralID) } }
+        guard let info = connectedCentrals[centralID], info.subscribedToPairing, let char = pairingChar else { return false }
+        return sendFramed(data, characteristic: char, central: info.central)
     }
-
-    /// Send session key data to a specific connected central.
     public func sendSessionKey(_ data: Data, to centralID: UUID) -> Bool {
-        guard let info = connectedCentrals[centralID],
-              info.subscribedToSession,
-              let char = sessionKeyChar else {
-            logger.warning("Cannot send session key: central \(centralID) not subscribed")
-            return false
+        if !Thread.isMainThread { return DispatchQueue.main.sync { self.sendSessionKey(data, to: centralID) } }
+        guard let info = connectedCentrals[centralID], info.subscribedToSession, let char = sessionKeyChar else { return false }
+        return sendFramed(data, characteristic: char, central: info.central)
+    }
+    private func sendFramed(_ data: Data, characteristic: CBMutableCharacteristic, central: CBCentral) -> Bool {
+        // CoreBluetooth is created on the main queue; all its operations stay there.
+        if !Thread.isMainThread { return DispatchQueue.main.sync { self.sendFramed(data, characteristic: characteristic, central: central) } }
+        guard let frames = try? BLEFraming.fragment(data, mtu: central.maximumUpdateValueLength), outbound.count + frames.count <= 2048, outbound.reduce(0, { $0 + $1.data.count }) + frames.reduce(0, { $0 + $1.count }) <= 65536 else { return false }
+        outbound.append(contentsOf: frames.map { QueuedFrame(central: central, characteristic: characteristic, data: $0) })
+        flushOutbound(); return true
+    }
+    private func flushOutbound() {
+        while let next = outbound.first {
+            guard connectedCentrals[next.central.identifier] != nil else { outbound.removeFirst(); continue }
+            guard peripheralManager.updateValue(next.data, for: next.characteristic, onSubscribedCentrals: [next.central]) else { return }
+            outbound.removeFirst()
         }
-
-        return peripheralManager.updateValue(
-            data,
-            for: char,
-            onSubscribedCentrals: [info.central]
-        )
     }
 
     /// Get the list of connected central UUIDs.
@@ -219,7 +207,8 @@ public class BLEServer: NSObject, BLEServerInterface {
 
     /// Get the average RSSI for a connected central.
     public func averageRSSI(for centralID: UUID) -> Int? {
-        connectedCentrals[centralID]?.averageRSSI
+        if !Thread.isMainThread { return DispatchQueue.main.sync { self.averageRSSI(for: centralID) } }
+        return connectedCentrals[centralID]?.averageRSSI
     }
 
     // MARK: - Private
@@ -268,6 +257,11 @@ public class BLEServer: NSObject, BLEServerInterface {
     }
 
     private func routeWrite(for characteristicUUID: CBUUID, data: Data, centralID: UUID) {
+        let key = centralID.uuidString + characteristicUUID.uuidString
+        var assembler = assemblers[key] ?? BLEReassembler()
+        let complete: Data?
+        do { complete = try assembler.accept(data); assemblers[key] = assembler } catch { assemblers.removeValue(forKey: key); return }
+        guard let data = complete else { return }
         let sessionUUID = CBUUID(string: TouchBridgeConstants.sessionKeyCharUUID)
         let responseUUID = CBUUID(string: TouchBridgeConstants.responseCharUUID)
         let pairingUUID = CBUUID(string: TouchBridgeConstants.pairingCharUUID)
@@ -290,6 +284,11 @@ public class BLEServer: NSObject, BLEServerInterface {
 extension BLEServer: CBPeripheralManagerDelegate {
 
     public func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
+        if peripheral.state != .poweredOn {
+            let disconnected = Array(connectedCentrals.keys)
+            connectedCentrals.removeAll(); assemblers.removeAll(); outbound.removeAll()
+            for id in disconnected { delegate?.bleServer(self, centralDidDisconnect: id) }
+        }
         switch peripheral.state {
         case .poweredOn:
             logger.info("Bluetooth powered on")
@@ -349,6 +348,7 @@ extension BLEServer: CBPeripheralManagerDelegate {
         logger.info("Central \(centralID) subscribed to \(characteristic.uuid)")
 
         if connectedCentrals[centralID] == nil {
+            guard connectedCentrals.count < 32 else { return }
             connectedCentrals[centralID] = ConnectedCentral(central: central)
             delegate?.bleServer(self, centralDidConnect: centralID)
         }
@@ -384,6 +384,8 @@ extension BLEServer: CBPeripheralManagerDelegate {
         if let info = connectedCentrals[centralID],
            !info.subscribedToChallenge && !info.subscribedToSession && !info.subscribedToPairing {
             connectedCentrals.removeValue(forKey: centralID)
+            assemblers = assemblers.filter { !$0.key.hasPrefix(centralID.uuidString) }
+            outbound.removeAll { $0.central.identifier == centralID }
             delegate?.bleServer(self, centralDidDisconnect: centralID)
         }
     }
@@ -393,7 +395,7 @@ extension BLEServer: CBPeripheralManagerDelegate {
         didReceiveWrite requests: [CBATTRequest]
     ) {
         for request in requests {
-            guard let data = request.value else {
+            guard request.offset == 0, let data = request.value else {
                 peripheral.respond(to: request, withResult: .invalidAttributeValueLength)
                 continue
             }
@@ -409,6 +411,7 @@ extension BLEServer: CBPeripheralManagerDelegate {
 
             // Track the central if not yet tracked
             if connectedCentrals[centralID] == nil {
+                guard connectedCentrals.count < 32 else { peripheral.respond(to: request, withResult: .insufficientResources); continue }
                 connectedCentrals[centralID] = ConnectedCentral(central: request.central)
                 delegate?.bleServer(self, centralDidConnect: centralID)
             }
@@ -424,8 +427,6 @@ extension BLEServer: CBPeripheralManagerDelegate {
     }
 
     public func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {
-        // Called when the transmit queue has space again after a failed updateValue.
-        // In a production implementation, we'd retry queued notifications here.
-        logger.info("Transmit queue ready for more notifications")
+        flushOutbound()
     }
 }

@@ -48,7 +48,7 @@ public struct SessionCrypto: Sendable {
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
             salt: Data(),
-            sharedInfo: Data("TouchBridge-v1".utf8),
+            sharedInfo: Data("TouchBridge-v2".utf8),
             outputByteCount: 32
         )
 

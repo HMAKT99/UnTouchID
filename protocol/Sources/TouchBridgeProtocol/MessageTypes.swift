@@ -9,6 +9,8 @@ public enum MessageType: UInt8, Codable, Sendable {
     case error = 5
     /// Sent by companion after ECDH to identify itself on reconnect (no pairing required).
     case identify = 6
+    case presencePing = 7
+    case presencePong = 8
 }
 
 // MARK: - Message Payloads
@@ -22,12 +24,14 @@ public struct PairRequestMessage: Codable, Sendable {
     /// One-time pairing token from the QR/pairing payload. The daemon rejects
     /// pairing requests whose token doesn't match the active pairing session.
     public let pairingToken: Data?
+    public let signature: Data?
 
-    public init(deviceName: String, publicKey: Data, deviceID: String? = nil, pairingToken: Data? = nil) {
+    public init(deviceName: String, publicKey: Data, deviceID: String? = nil, pairingToken: Data? = nil, signature: Data? = nil) {
         self.deviceName = deviceName
         self.publicKey = publicKey
         self.deviceID = deviceID
         self.pairingToken = pairingToken
+        self.signature = signature
     }
 }
 
@@ -87,10 +91,12 @@ public struct ErrorMessage: Codable, Sendable {
 public struct IdentifyMessage: Codable, Sendable {
     public let deviceID: String
     public let deviceName: String
+    public let signature: Data?
 
-    public init(deviceID: String, deviceName: String) {
+    public init(deviceID: String, deviceName: String, signature: Data? = nil) {
         self.deviceID = deviceID
         self.deviceName = deviceName
+        self.signature = signature
     }
 }
 
@@ -98,4 +104,16 @@ public struct IdentifyMessage: Codable, Sendable {
 public enum ErrorCode: UInt16, Sendable {
     /// Secure Enclave key was invalidated — biometric enrollment changed since pairing.
     case keyInvalidated = 1001
+}
+
+public struct AuthorizationChallengeMessage: Codable, Sendable {
+    public let challengeID: String
+    public let authorization: Data
+    public init(challengeID: String, authorization: Data) { self.challengeID = challengeID; self.authorization = authorization }
+}
+
+/// An authenticated, per-session freshness challenge; never an authorization proof.
+public struct PresenceHeartbeatMessage: Codable, Sendable {
+    public let nonce: Data
+    public init(nonce: Data) { self.nonce = nonce }
 }

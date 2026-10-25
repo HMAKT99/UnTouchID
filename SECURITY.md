@@ -9,77 +9,59 @@ If you discover a security vulnerability in TouchBridge, please report it respon
 3. Include: description, reproduction steps, impact assessment
 4. We will acknowledge within 48 hours and provide a fix timeline
 
-## Threat Model
+## Protocol v2 security boundary
 
-### What TouchBridge protects against
+PAM generates and retains a fresh canonical payload (nonce, Mac identity hash,
+UID/user, PID/service, short expiry) and verifies the phone signature itself.
+The user daemon is untrusted transport. Boolean success, simulator keys and web
+tokens cannot authorize PAM. Unknown versions, bad proofs and timeouts fall
+through to password.
 
-- **Remote authentication attacks**: Biometric confirmation happens on a physical device you hold
-- **Replay attacks**: 32-byte nonces with 10-second expiry and 60-second seen-nonces window
-- **Man-in-the-middle**: ECDH ephemeral session keys with AES-256-GCM encryption on BLE channel
-- **Key theft**: Private signing key lives inside Secure Enclave — never exported, never leaves the chip
+Module and trust paths are `/Library/Security/TouchBridge/pam_touchbridge.so`
+and `/Library/Security/TouchBridge/Trust/<uid>.plist`. All ancestors require
+no-follow descriptors, root ownership, safe write permissions and ACL checks.
+Extended ACLs are conservatively rejected. Enrollment requires explicit full
+fingerprint confirmation; user Keychain data is never auto-imported. Root trust
+is re-read after the phone prompt so administrator revocation can take effect.
 
-### What TouchBridge does NOT protect against
+QR pins a persistent Mac identity. Signed ECDH binds both ephemeral keys and
+service context before encrypted token release. Encrypted pairing and fresh
+possession proofs bind the phone key to the session; token consumption is atomic.
+The complete authorization is authenticated and signed. Approval text is derived
+from validated canonical fields, never an unsigned outer reason.
 
-- **Physical access to unlocked companion device**: If someone has your unlocked iPhone, they can approve auth requests
-- **Keychain items with `kSecAccessControlBiometryCurrentSet`**: Cryptographically impossible — hardware ACL wall
-- **Sandboxed third-party apps calling `LAContext`**: Blocked by SIP and sandbox
-- **Compromised macOS kernel**: If the kernel is compromised, no user-space security holds
+Unpair first disables reconnect and pending signing, then deletes signing
+capability and identity. Failed cleanup stays disabled across restart and is
+retryable. Root trust revocation is separate. Auto-lock follows verified companion
+counts and reports success only after positive macOS lock-state readback.
 
-### Availability note: PAM fallback vs. a dangling module reference
+## Verification limits
 
-TouchBridge installs `pam_touchbridge.so` as `auth sufficient`, so if the daemon
-is down or the phone is unreachable, PAM falls through to your password — you are
-never locked out by a *failed* authentication.
+This is an unreleased source migration, not an attestation of Homebrew 1.1.2.
+V1 peers require re-pairing. Android/Watch/web/simulator/browser diagnostics and
+the Authorization Plugin are not privileged v2 paths; the plugin fails closed.
+Root/kernel compromise and hardware-bound Apple authentication are outside scope.
+Radio denial of service, clocks or missing permissions may cause failure but must
+not cause an authentication bypass.
 
-There is one exception, and it is an **availability** issue, not an
-authentication bypass: if the module *file* is deleted while a PAM config still
-references it, `sudo` cannot initialize PAM and refuses to run entirely. The
-`sufficient` flag only falls through when the module loads and returns failure —
-a missing module file is a hard failure.
+Unit/core fixture and build success are separate from real phone BLE/Face ID,
+root enrollment/revocation, privileged installation, password fallback, migration
+recovery and actual screen locking. These remain native acceptance gates.
 
-To avoid this, on macOS Sonoma+ we install the hook into the unprotected
-`/etc/pam.d/sudo_local` (Apple's sanctioned include) rather than the SIP-protected
-`/etc/pam.d/sudo`, and our uninstaller always removes the hook **before** the
-module. If you ever hit `sudo: unable to initialize PAM: No such file or
-directory`, recover without needing sudo (GUI admin auth uses a different PAM
-stack):
+## Availability and recovery
 
-```bash
-# Sonoma+ (hook in sudo_local — just delete it):
-osascript -e 'do shell script "rm -f /etc/pam.d/sudo_local" with administrator privileges'
-```
+A missing PAM module can prevent PAM initialization, even with auth sufficient.
+Remove hooks before deleting modules. Preserve unrelated entries and backups;
+never blindly restore a backup containing vulnerable v1 hooks. Do not disable
+SIP or change shared Homebrew ownership. Keep independent admin/password recovery.
+See [setup](docs/setup.md) and [evidence format](docs/pam-evidence-v2.md).
 
-If `/etc/pam.d/sudo` itself is protected on your system and the hook was written
-there by an older version, the most reliable fix is to restore the module so the
-reference resolves again — download the latest `.pkg`, then:
+## Audit logs
 
-```bash
-pkgutil --expand-full TouchBridge-*.pkg /tmp/tb-x
-osascript -e 'do shell script "cp /tmp/tb-x/Payload/usr/local/lib/pam/pam_touchbridge.so /usr/local/lib/pam/" with administrator privileges'
-```
+User-controlled NDJSON under `~/Library/Logs/TouchBridge` is not a tamper-proof
+privileged receipt. Do not log nonces/private keys or treat simulated records as
+phone acceptance. Tests use isolated logs/sockets/Keychain namespaces. The v2
+`tests/e2e-validation.sh` runs isolated suites only; older versions change real
+state and are unsafe on a working machine.
 
-### Cryptographic properties
-
-| Property | Implementation |
-|----------|---------------|
-| Nonce | 32 bytes from `SecRandomCopyBytes` |
-| Nonce expiry | 10 seconds (hard minimum) |
-| Replay protection | Seen-nonces ring buffer, 60-second TTL |
-| Signing algorithm | ECDSA P-256 (`ecdsaSignatureMessageX962SHA256`) |
-| Key storage (iOS) | Secure Enclave (`kSecAttrTokenIDSecureEnclave`) |
-| Key storage (Mac) | Keychain (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`) |
-| Session encryption | AES-256-GCM over ECDH-derived key (HKDF-SHA256) |
-| Transport | BLE GATT (encrypted) or local Wi-Fi (Bonjour) |
-
-### Audit logging
-
-Every authentication event is logged to `~/Library/Logs/TouchBridge/` as NDJSON:
-- Session ID, result, device, surface, RSSI, latency
-- **Nonce values are NEVER logged**
-
-## Supported versions
-
-| Version | Supported |
-|---------|-----------|
-| 1.0.x   | Yes       |
-| 0.1.x   | No — upgrade to 1.0 |
+Verified presence has an 8-second monotonic lease, refreshed by one-use encrypted heartbeat challenges (normally every 2 seconds). Missing or replayed replies cannot preserve a ghost session; expiry removes it and publishes absence in state-change order. This establishes authenticated liveness, not cryptographic distance bounding: a live bidirectional relay to an online phone can still extend apparent physical range. Native background/BLE behavior must be verified before relying on auto-lock.

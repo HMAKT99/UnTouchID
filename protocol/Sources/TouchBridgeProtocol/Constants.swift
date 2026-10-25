@@ -3,10 +3,10 @@ import Foundation
 /// Shared constants for the TouchBridge protocol.
 public enum TouchBridgeConstants {
     /// Protocol version — included in every message header.
-    public static let protocolVersion: UInt8 = 0x01
+    public static let protocolVersion: UInt8 = 0x02
 
     /// Maximum wire message size in bytes.
-    public static let maxMessageSize = 256
+    public static let maxMessageSize = 8192
 
     // MARK: - BLE UUIDs
 

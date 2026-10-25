@@ -31,7 +31,7 @@ private func makeStore() -> KeychainStore {
     let qrData = try await manager.generatePairingQRData()
 
     let payload = try JSONDecoder().decode(PairingPayload.self, from: qrData)
-    #expect(payload.version == 1)
+    #expect(payload.version == 2)
     #expect(payload.serviceUUID == TouchBridgeConstants.serviceUUID)
     #expect(payload.pairingToken.count == 16)
     #expect(payload.macName == "Test Mac")

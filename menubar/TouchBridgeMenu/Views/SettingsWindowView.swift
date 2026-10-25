@@ -43,7 +43,7 @@ struct GeneralSettingsView: View {
                 Button("Uninstall TouchBridge...") {
                     let alert = NSAlert()
                     alert.messageText = "Uninstall TouchBridge?"
-                    alert.informativeText = "This will remove the daemon, PAM module, and restore your original sudo config."
+                    alert.informativeText = "This removes TouchBridge authentication hooks and the module while preserving unrelated authentication settings and recovery backups."
                     alert.alertStyle = .warning
                     alert.addButton(withTitle: "Uninstall")
                     alert.addButton(withTitle: "Cancel")
@@ -59,14 +59,31 @@ struct GeneralSettingsView: View {
     }
 
     private func runUninstall() {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = [
-            "-e",
-            "do shell script \"/bin/bash /usr/local/share/touchbridge/uninstall.sh\" with administrator privileges"
-        ]
-        try? process.run()
+        do {
+            let command = try ProtectedInstallation.command(for: .uninstall)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", "do shell script \"" + command + "\" with administrator privileges"]
+            process.terminationHandler = { finished in
+                DispatchQueue.main.async {
+                    state.checkInstallation()
+                    if finished.terminationStatus != 0 {
+                        let alert = NSAlert()
+                        alert.messageText = "Uninstall was not completed"
+                        alert.informativeText = "Authentication was cancelled or the protected uninstaller refused the operation. Use the reviewed v2 setup guide."
+                        alert.runModal()
+                    }
+                }
+            }
+            try process.run()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Protected installation required"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
     }
+
 }
 
 struct AboutView: View {

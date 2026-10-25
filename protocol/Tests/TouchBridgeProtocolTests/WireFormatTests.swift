@@ -46,8 +46,8 @@ import Foundation
 }
 
 @Test func oversizeMessageThrows() throws {
-    // Create a message that exceeds 256 bytes
-    let largeKey = Data(repeating: 0xFF, count: 300)
+    // Create a message that exceeds the bounded v2 message limit
+    let largeKey = Data(repeating: 0xFF, count: 8192)
     let msg = PairRequestMessage(deviceName: "Big", publicKey: largeKey)
 
     #expect(throws: WireFormatError.self) {
