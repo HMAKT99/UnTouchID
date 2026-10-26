@@ -9,10 +9,7 @@ struct AuthRequestView: View {
     let keyInvalidated: Bool
     /// Observed from AppState — when true, show a denial message instead of dismissing silently.
     let wasDenied: Bool
-    let onApprove: () -> Void
     let onDeny: () -> Void
-
-    @State private var isAuthenticating = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -67,53 +64,26 @@ struct AuthRequestView: View {
 
     @ViewBuilder
     private var normalBody: some View {
-        Text("Use Face ID to authenticate?")
+        Text("Authentication requested")
             .font(.title3.bold())
             .multilineTextAlignment(.center)
             .padding(.bottom, 12)
 
-        Text("You will be authenticated on \"\(macName)\" for \"\(reason)\".")
+        Text("\(macName) requests approval for \(reason).")
             .font(.body)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 32)
             .padding(.bottom, 32)
 
-        // Biometric graphic — pink tint matches macOS passkey dialog
-        VStack(spacing: 8) {
-            Image(systemName: "touchid")
-                .font(.system(size: 80))
-                .foregroundStyle(.pink)
+        ProgressView("Waiting for biometric confirmation…")
+            .padding(.bottom, 16)
 
-            Text("Continue with Face ID")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.bottom, 40)
-
-        // Primary action button
-        VStack(spacing: 0) {
-            if isAuthenticating {
-                ProgressView("Authenticating...")
-                    .padding()
-                    .frame(maxWidth: .infinity)
-            } else {
-                Button {
-                    isAuthenticating = true
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    onApprove()
-                } label: {
-                    Text("Continue with Face ID")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(isAuthenticating)
-            }
-        }
-        .padding(.horizontal, 24)
+        Text("Respond to the Face ID or Touch ID prompt on this iPhone. Cancel stops this request.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 32)
     }
 
     // MARK: - Key invalidated state

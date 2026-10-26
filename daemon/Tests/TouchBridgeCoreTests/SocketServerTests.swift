@@ -19,7 +19,7 @@ final class MockPAMAuthHandler: PAMAuthHandler, @unchecked Sendable {
 }
 
 /// Connect to a Unix socket, send a string, and read the response.
-private func sendToSocket(path: String, message: String) throws -> String {
+private func sendToSocket(path: String, message: String, terminated: Bool = true) throws -> String {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { throw SocketServerError.socketCreationFailed(errno) }
     defer { close(fd) }
@@ -47,10 +47,13 @@ private func sendToSocket(path: String, message: String) throws -> String {
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
     // Send
-    let data = message.data(using: .utf8)!
+    let framed = terminated && !message.hasSuffix("\n") ? message + "\n" : message
+    let data = framed.data(using: .utf8)!
     _ = data.withUnsafeBytes { ptr in
         send(fd, ptr.baseAddress!, ptr.count, 0)
     }
+
+    if !terminated { shutdown(fd, SHUT_WR) }
 
     // Receive
     var buffer = [UInt8](repeating: 0, count: 4096)
@@ -69,6 +72,37 @@ private func makeTempSocketPath() -> String {
 
 // MARK: - Tests
 
+/// A queued cancellation from the previous listener must not close its replacement.
+@Test func socketServerRestartKeepsReplacementDescriptorAlive() throws {
+    let path = makeTempSocketPath()
+    let queue = DispatchQueue(label: "dev.touchbridge.test.socket-lifecycle")
+    let server = SocketServer(authHandler: MockPAMAuthHandler(), socketPath: path, eventQueue: queue)
+    queue.suspend()
+    var suspended = true
+    defer {
+        if suspended { queue.resume() }
+        server.stop()
+        queue.sync {}
+        unlink(path)
+    }
+    try server.start()
+    server.stop()
+    try server.start()
+    queue.resume()
+    suspended = false
+    queue.sync {}
+    let response = try sendToSocket(path: path, message: "invalid-json")
+    #expect(response.contains("parse_error"))
+    server.stop()
+    queue.sync {}
+    // Cancelled listeners must not close descriptors acquired after stop.
+    let sentinel = open("/dev/null", O_RDONLY)
+    defer { if sentinel >= 0 { close(sentinel) } }
+    #expect(sentinel >= 0)
+    queue.sync {}
+    #expect(fcntl(sentinel, F_GETFD) >= 0)
+}
+
 @Test func socketServerAcceptsAndRespondsSuccess() async throws {
     let socketPath = makeTempSocketPath()
     defer { unlink(socketPath) }
@@ -86,7 +120,7 @@ private func makeTempSocketPath() -> String {
     try await Task.sleep(nanoseconds: 100_000_000)
 
     let request = """
-    {"action":"authenticate","user":"testuser","service":"sudo","pid":1234}
+    {"action":"diagnostic_authenticate","user":"testuser","service":"sudo","pid":1234}
     """
 
     let response = try sendToSocket(path: socketPath, message: request)
@@ -113,7 +147,7 @@ private func makeTempSocketPath() -> String {
     try await Task.sleep(nanoseconds: 100_000_000)
 
     let request = """
-    {"action":"authenticate","user":"arun","service":"screensaver","pid":5678}
+    {"action":"diagnostic_authenticate","user":"arun","service":"screensaver","pid":5678}
     """
 
     let response = try sendToSocket(path: socketPath, message: request)
@@ -173,7 +207,7 @@ private func makeTempSocketPath() -> String {
     // Send multiple requests sequentially
     for i in 0..<3 {
         let request = """
-        {"action":"authenticate","user":"user\(i)","service":"sudo","pid":\(1000 + i)}
+        {"action":"diagnostic_authenticate","user":"user\(i)","service":"sudo","pid":\(1000 + i)}
         """
         let response = try sendToSocket(path: socketPath, message: request)
         #expect(response.contains("\"result\":\"success\""))
@@ -211,4 +245,48 @@ private func makeTempSocketPath() -> String {
     defer { server.stop() }
 
     #expect(server.isListening)
+}
+
+@Test func socketServerRejectsLegacyPAMWithoutCallingApprovingHandler() throws {
+    let path = makeTempSocketPath()
+    let handler = MockPAMAuthHandler()
+    let server = SocketServer(authHandler: handler, socketPath: path)
+    try server.start()
+    defer { server.stop() }
+    let response = try sendToSocket(path: path, message:
+        #"{"action":"authenticate","user":"admin","service":"sudo","pid":1}"#)
+    #expect(response.contains("evidence_v2_required"))
+    #expect(!response.contains(#""result":"success""#))
+    #expect(handler.lastRequest == nil)
+}
+
+@Test func socketServerNeverDowngradesPAMEvidenceToSimulator() throws {
+    let path = makeTempSocketPath()
+    let logs = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: logs) }
+    let handler = SimulatorAuthHandler(mode: .autoApprove, auditLog: AuditLog(logDirectory: logs))
+    let server = SocketServer(authHandler: handler, socketPath: path)
+    try server.start()
+    defer { server.stop() }
+    let response = try sendToSocket(path: path, message:
+        #"{"action":"authenticate","user":"admin","service":"sudo","pid":1,"evidenceVersion":2,"challenge":"AA=="}"#)
+    #expect(response.contains("evidence_v2_required"))
+    #expect(!response.contains(#""result":"success""#))
+    #expect(!FileManager.default.fileExists(atPath: logs.path))
+}
+
+@Test func socketServerRejectsIncompleteFrameAndDiagnosticEvidence() throws {
+    let path = makeTempSocketPath()
+    let handler = MockPAMAuthHandler()
+    let server = SocketServer(authHandler: handler, socketPath: path)
+    try server.start()
+    defer { server.stop() }
+    let incomplete = try sendToSocket(path: path, message:
+        #"{"action":"diagnostic_authenticate","user":"admin","service":"sudo","pid":1}"#,
+        terminated: false)
+    #expect(incomplete.contains("incomplete_request"))
+    let evidence = try sendToSocket(path: path, message:
+        #"{"action":"diagnostic_authenticate","user":"admin","service":"sudo","pid":1,"evidenceVersion":2,"challenge":"AA=="}"#)
+    #expect(evidence.contains("diagnostic_evidence_forbidden"))
+    #expect(handler.lastRequest == nil)
 }

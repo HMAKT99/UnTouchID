@@ -9,11 +9,13 @@ public struct PairingPayload: Codable, Sendable {
     public let serviceUUID: String
     public let pairingToken: Data
     public let macName: String
+    public let publicKey: Data
 
-    public init(version: UInt8 = 1, serviceUUID: String, pairingToken: Data, macName: String) {
+    public init(version: UInt8 = 2, serviceUUID: String, pairingToken: Data, macName: String, publicKey: Data = Data()) {
         self.version = version
         self.serviceUUID = serviceUUID
         self.pairingToken = pairingToken
+        self.publicKey = publicKey
         self.macName = macName
     }
 }
@@ -66,7 +68,8 @@ public actor PairingManager {
         let payload = PairingPayload(
             serviceUUID: serviceUUID,
             pairingToken: token,
-            macName: macName
+            macName: macName,
+            publicKey: try keychainStore.macIdentityPublicKey()
         )
 
         let encoder = JSONEncoder()
@@ -130,6 +133,7 @@ public actor PairingManager {
             throw PairingError.invalidPublicKey
         }
 
+        guard SecureHandshake.validDeviceID(deviceID), (1...128).contains(deviceName.utf8.count) else { throw PairingError.invalidPublicKey }
         let device = PairedDevice(
             deviceID: deviceID,
             publicKey: devicePublicKey,
@@ -137,6 +141,7 @@ public actor PairingManager {
             pairedAt: Date()
         )
 
+        activePairing = nil // Consume before returning; actor serialization makes validation atomic.
         logger.info("Pairing request validated for \(deviceName)")
         return device
     }
@@ -144,7 +149,6 @@ public actor PairingManager {
     /// Complete the pairing by storing the device in the Keychain.
     public func completePairing(device: PairedDevice) throws {
         try keychainStore.storePairedDevice(device)
-        activePairing = nil
         logger.info("Pairing completed for \(device.displayName) (\(device.deviceID))")
     }
 

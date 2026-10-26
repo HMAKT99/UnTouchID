@@ -2,18 +2,9 @@ import Foundation
 import WatchConnectivity
 import UserNotifications
 
-/// Manages communication between the Watch and the iPhone companion app.
-///
-/// Flow:
-/// 1. iPhone receives BLE challenge from Mac daemon
-/// 2. iPhone sends challenge to Watch via WatchConnectivity
-/// 3. Watch shows approve/deny prompt
-/// 4. User taps approve (or double-clicks side button)
-/// 5. Watch sends approval back to iPhone
-/// 6. iPhone signs the nonce and sends response to Mac
-///
-/// The Watch does NOT do any cryptography — it's purely an approval UI.
-/// The iPhone handles all signing with its Secure Enclave.
+/// Watch authentication remains unavailable until the Watch can validate the
+/// canonical authorization context. Never treat a loose message dictionary as
+/// a trusted approval request.
 class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDelegate {
 
     @Published var isReachable: Bool = false
@@ -46,43 +37,13 @@ class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDelegate {
     // MARK: - Actions
 
     func approve() {
-        guard let challenge = pendingChallenge else { return }
-
-        let response: [String: Any] = [
-            "type": "auth_response",
-            "challengeID": challenge.challengeID,
-            "approved": true,
-        ]
-
-        session?.sendMessage(response, replyHandler: nil) { error in
-            print("Failed to send approval: \(error.localizedDescription)")
-        }
-
-        challengeCount += 1
-        lastResult = "Approved"
         pendingChallenge = nil
-
-        // Haptic feedback
-        WKInterfaceDevice.current().play(.success)
+        lastResult = "Open TouchBridge on iPhone to authenticate"
     }
 
     func deny() {
-        guard let challenge = pendingChallenge else { return }
-
-        let response: [String: Any] = [
-            "type": "auth_response",
-            "challengeID": challenge.challengeID,
-            "approved": false,
-        ]
-
-        session?.sendMessage(response, replyHandler: nil) { error in
-            print("Failed to send denial: \(error.localizedDescription)")
-        }
-
-        lastResult = "Denied"
         pendingChallenge = nil
-
-        WKInterfaceDevice.current().play(.failure)
+        lastResult = "No verified request"
     }
 
     // MARK: - WCSessionDelegate
@@ -102,20 +63,10 @@ class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDelegate {
 
     /// Receives auth challenge from iPhone companion app.
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
-        guard let type = message["type"] as? String, type == "auth_challenge" else { return }
-
-        let challenge = WatchChallenge(
-            challengeID: message["challengeID"] as? String ?? "",
-            reason: message["reason"] as? String ?? "Authentication",
-            macName: message["macName"] as? String ?? "Mac",
-            user: message["user"] as? String ?? "",
-            timestamp: Date()
-        )
-
+        guard message["type"] as? String == "auth_challenge" else { return }
         DispatchQueue.main.async {
-            self.pendingChallenge = challenge
-            // Haptic to alert user
-            WKInterfaceDevice.current().play(.notification)
+            self.pendingChallenge = nil
+            self.lastResult = "Open TouchBridge on iPhone to authenticate"
         }
     }
 

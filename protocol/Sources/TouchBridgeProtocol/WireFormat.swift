@@ -4,6 +4,7 @@ import Foundation
 public enum WireFormatError: Error, Sendable {
     case messageTooLarge(Int)
     case messageTooSmall
+    case unsupportedVersion(UInt8)
     case unknownMessageType(UInt8)
     case encodingFailed
     case decodingFailed
@@ -12,17 +13,15 @@ public enum WireFormatError: Error, Sendable {
 /// Handles encoding and decoding of TouchBridge wire messages.
 ///
 /// Wire format: [version: UInt8][type: UInt8][payload: JSON bytes]
-/// Max total size: 256 bytes.
-/// Uses JSON encoding for Phase 0 (MessagePack can be swapped in later).
+/// Max total size: 8192 bytes, fragmented to the negotiated BLE MTU.
+/// Authenticated channels use seal/open around the complete encoded message.
 public struct WireFormat: Sendable {
 
     private static let headerSize = 2 // version + type
 
     public static func encode<T: Encodable>(_ type: MessageType, _ message: T) throws -> Data {
         let encoder = JSONEncoder()
-        // Prevent forward-slash escaping (/ → \/) in base64-encoded Data fields.
-        // Without this, binary data that encodes to many '/' chars in base64 can
-        // push the JSON over the 256-byte BLE packet limit.
+        // Keep base64 payloads compact before MTU-aware fragmentation.
         encoder.outputFormatting = .withoutEscapingSlashes
         let payload = try encoder.encode(message)
         let totalSize = headerSize + payload.count
@@ -42,6 +41,8 @@ public struct WireFormat: Sendable {
             throw WireFormatError.messageTooSmall
         }
 
+        guard data.count <= TouchBridgeConstants.maxMessageSize else { throw WireFormatError.messageTooLarge(data.count) }
+        guard data[data.startIndex] == TouchBridgeConstants.protocolVersion else { throw WireFormatError.unsupportedVersion(data[data.startIndex]) }
         let typeByte = data[data.startIndex + 1]
         guard let type = MessageType(rawValue: typeByte) else {
             throw WireFormatError.unknownMessageType(typeByte)

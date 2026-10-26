@@ -31,7 +31,7 @@ class MenuBarState: ObservableObject {
 
     func checkInstallation() {
         isInstalled = FileManager.default.fileExists(atPath: "/usr/local/bin/touchbridged")
-            && FileManager.default.fileExists(atPath: "/usr/local/lib/pam/pam_touchbridge.so")
+            && ProtectedInstallation.isInstalled
 
         let socketPath = "\(NSHomeDirectory())/Library/Application Support/TouchBridge/daemon.sock"
         isDaemonRunning = FileManager.default.fileExists(atPath: socketPath)

@@ -1,5 +1,6 @@
 import ArgumentParser
 import CoreImage
+import CryptoKit
 import Foundation
 import TouchBridgeCore
 import TouchBridgeProtocol
@@ -10,7 +11,7 @@ struct TouchBridgeTest: ParsableCommand {
         commandName: "touchbridge-test",
         abstract: "CLI test harness for TouchBridge challenge-response flow.",
         version: "1.0.0",
-        subcommands: [PairCommand.self, ChallengeCommand.self, ListDevicesCommand.self, ConfigCommand.self, LogsCommand.self]
+        subcommands: [PairCommand.self, ChallengeCommand.self, ListDevicesCommand.self, ConfigCommand.self, LogsCommand.self, ExportPAMTrustCommand.self]
     )
 }
 
@@ -611,5 +612,22 @@ struct LogsCommand: ParsableCommand {
             let latency = entry.latencyMs.map(String.init) ?? ""
             print("\(entry.ts),\(entry.surface),\(entry.result),\(entry.companionDevice),\(entry.authType),\(latency)")
         }
+    }
+}
+
+
+/// Explicit public metadata export; root enrollment is a separate administration step.
+struct ExportPAMTrustCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "export-pam-trust", abstract: "Export public v2 enrollment metadata for manual fingerprint verification.")
+    func run() throws {
+        let store = KeychainStore()
+        let macKey = try store.macIdentityPublicKey()
+        func fingerprint(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+        struct Device: Encodable { let deviceID: String; let publicKey: Data; let fingerprint: String }
+        struct Export: Encodable { let version: Int; let uid: UInt32; let macPublicKey: Data; let macFingerprint: String; let devices: [Device] }
+        let devices = try store.listPairedDevices().map { Device(deviceID: $0.deviceID, publicKey: $0.publicKey, fingerprint: fingerprint($0.publicKey)) }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(Export(version: 2, uid: getuid(), macPublicKey: macKey, macFingerprint: fingerprint(macKey), devices: devices))
+        print(String(decoding: data, as: UTF8.self))
     }
 }

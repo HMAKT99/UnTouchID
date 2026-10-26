@@ -1,302 +1,70 @@
-/*
- * pam_touchbridge.c — TouchBridge PAM module
- *
- * Connects to the TouchBridge daemon via a Unix domain socket and
- * requests biometric authentication on the user's paired iOS device.
- *
- * PAM config line:
- *   auth  sufficient  pam_touchbridge.so [timeout=15]
- *
- * If "sufficient", a successful TouchBridge auth skips the password prompt.
- * If TouchBridge fails (timeout, no device, etc.), PAM falls through to
- * the next module (typically password).
- *
- * Security notes:
- * - Never logs nonces, keys, or passwords
- * - Socket path derived from target user's home directory (not env vars)
- * - Fixed-size buffers prevent overflow
- * - All socket fds closed on all code paths
- */
-
+/* TouchBridge PAM: the user daemon is an untrusted evidence transport. */
 #include "pam_touchbridge.h"
-
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <pwd.h>
+#include "evidence.h"
 #include <errno.h>
+#include <pwd.h>
+#include <stdlib.h>
+#include <string.h>
 #include <syslog.h>
+#include <unistd.h>
 
-/*
- * Send an info message to the user's terminal via PAM conversation.
- * This is how PAM modules display "Check your phone..." type messages.
- */
-static void pam_notify(pam_handle_t *pamh, const char *msg)
+static void notify(pam_handle_t *pamh, const char *message)
 {
     const struct pam_conv *conv = NULL;
-    struct pam_message pmsg;
-    const struct pam_message *pmsgp = &pmsg;
-    struct pam_response *resp = NULL;
-
-    if (pam_get_item(pamh, PAM_CONV, (const void **)&conv) != PAM_SUCCESS
-        || conv == NULL || conv->conv == NULL) {
-        return;
-    }
-
-    pmsg.msg_style = PAM_TEXT_INFO;
-    pmsg.msg = (char *)msg;
-
-    conv->conv(1, &pmsgp, &resp, conv->appdata_ptr);
-
-    if (resp != NULL) {
-        free(resp);
+    struct pam_message msg = { PAM_TEXT_INFO, (char *)message };
+    const struct pam_message *pointer = &msg;
+    struct pam_response *response = NULL;
+    if (pam_get_item(pamh, PAM_CONV, (const void **)&conv) == PAM_SUCCESS && conv && conv->conv) {
+        conv->conv(1, &pointer, &response, conv->appdata_ptr);
+        if (response) { free(response->resp); free(response); }
     }
 }
 
-/* Maximum sizes */
-#define MAX_SOCK_PATH  256
-#define MAX_REQUEST    512
-#define MAX_RESPONSE   512
-#define DEFAULT_TIMEOUT 15
-
-/*
- * Build the socket path for the target user.
- * Path: <homedir>/Library/Application Support/TouchBridge/daemon.sock
- */
-static int build_socket_path(const char *username, char *path, size_t pathlen)
-{
-    struct passwd *pw = getpwnam(username);
-    if (pw == NULL) {
-        syslog(LOG_AUTH | LOG_ERR, "pam_touchbridge: getpwnam failed for user %s", username);
-        return -1;
-    }
-
-    int ret = snprintf(path, pathlen,
-        "%s/Library/Application Support/TouchBridge/daemon.sock",
-        pw->pw_dir);
-
-    if (ret < 0 || (size_t)ret >= pathlen) {
-        syslog(LOG_AUTH | LOG_ERR, "pam_touchbridge: socket path too long");
-        return -1;
-    }
-
-    return 0;
-}
-
-/*
- * Parse the timeout=N argument from PAM module arguments.
- * Returns the timeout in seconds, or DEFAULT_TIMEOUT if not specified.
- */
-static int parse_timeout(int argc, const char **argv)
+static unsigned timeout_seconds(int argc, const char **argv)
 {
     for (int i = 0; i < argc; i++) {
         if (strncmp(argv[i], "timeout=", 8) == 0) {
-            int t = atoi(argv[i] + 8);
-            if (t > 0 && t <= 300) {
-                return t;
-            }
+            char *end = NULL;
+            errno = 0;
+            unsigned long value = strtoul(argv[i] + 8, &end, 10);
+            if (errno || end == argv[i] + 8 || *end || value < 1 || value > 30) return 0;
+            return (unsigned)value;
         }
     }
-    return DEFAULT_TIMEOUT;
+    return 15;
 }
 
-/*
- * Connect to the daemon's Unix domain socket.
- * Returns the socket fd on success, -1 on failure.
- */
-static int connect_to_daemon(const char *sock_path, int timeout_sec)
+PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv)
 {
-    int fd = -1;
-    struct sockaddr_un addr;
-    struct timeval tv;
-
-    fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) {
-        syslog(LOG_AUTH | LOG_ERR, "pam_touchbridge: socket() failed: %s", strerror(errno));
-        return -1;
-    }
-
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-
-    if (strlen(sock_path) >= sizeof(addr.sun_path)) {
-        syslog(LOG_AUTH | LOG_ERR, "pam_touchbridge: socket path too long");
-        close(fd);
-        return -1;
-    }
-    strncpy(addr.sun_path, sock_path, sizeof(addr.sun_path) - 1);
-
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        syslog(LOG_AUTH | LOG_WARNING,
-            "pam_touchbridge: connect failed: %s (daemon may not be running)",
-            strerror(errno));
-        close(fd);
-        return -1;
-    }
-
-    /* Set receive timeout with a 2s grace margin over the daemon's auth
-     * window (both default to 15s). Without the margin they race: PAM can
-     * give up at the exact moment the daemon sends its result, losing an
-     * approval that already happened. */
-    tv.tv_sec = timeout_sec + 2;
-    tv.tv_usec = 0;
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-    return fd;
-}
-
-/*
- * pam_sm_authenticate — main authentication entry point.
- *
- * Connects to the TouchBridge daemon socket, sends an auth request,
- * and waits for the daemon to verify the user via their companion device.
- */
-PAM_EXTERN int
-pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv)
-{
-    const char *user = NULL;
-    const char *service = NULL;
-    char sock_path[MAX_SOCK_PATH];
-    char request[MAX_REQUEST];
-    char response[MAX_RESPONSE];
-    int fd = -1;
-    int ret = PAM_AUTH_ERR;
-    int timeout_sec;
-    ssize_t bytes;
-
-    (void)flags; /* unused */
-
-    /* Get the target username */
-    if (pam_get_user(pamh, &user, NULL) != PAM_SUCCESS || user == NULL) {
-        syslog(LOG_AUTH | LOG_ERR, "pam_touchbridge: failed to get username");
+    (void)flags;
+    const char *user = NULL, *service = NULL;
+    if (pam_get_user(pamh, &user, NULL) != PAM_SUCCESS || !user || !*user
+        || pam_get_item(pamh, PAM_SERVICE, (const void **)&service) != PAM_SUCCESS || !service)
         return PAM_AUTH_ERR;
+    unsigned timeout = timeout_seconds(argc, argv);
+    if (!timeout) return PAM_AUTH_ERR;
+    long suggested = sysconf(_SC_GETPW_R_SIZE_MAX);
+    size_t capacity = suggested > 0 && suggested <= 1048576 ? (size_t)suggested : 16384;
+    char *buffer = malloc(capacity);
+    if (!buffer) return PAM_AUTH_ERR;
+    struct passwd record, *result = NULL;
+    int status = getpwnam_r(user, &record, buffer, capacity, &result);
+    int success = 0;
+    if (status == 0 && result && record.pw_dir && record.pw_dir[0] == '/') {
+        notify(pamh, "TouchBridge: check your paired phone and verify the user and service...");
+        success = tb_authenticate(user, service, record.pw_uid, record.pw_dir, timeout);
     }
-
-    /* Get the PAM service name */
-    if (pam_get_item(pamh, PAM_SERVICE, (const void **)&service) != PAM_SUCCESS
-        || service == NULL) {
-        service = "unknown";
-    }
-
-    /* Parse timeout from module arguments */
-    timeout_sec = parse_timeout(argc, argv);
-
-    syslog(LOG_AUTH | LOG_INFO,
-        "pam_touchbridge: auth request for user=%s service=%s timeout=%d",
-        user, service, timeout_sec);
-
-    /* Build socket path from the target user's home directory */
-    if (build_socket_path(user, sock_path, sizeof(sock_path)) != 0) {
-        goto cleanup;
-    }
-
-    /* Connect to daemon */
-    fd = connect_to_daemon(sock_path, timeout_sec);
-    if (fd < 0) {
-        pam_notify(pamh, "TouchBridge: daemon not running — falling through to password");
-        goto cleanup;
-    }
-
-    pam_notify(pamh, "TouchBridge: check your phone or watch...");
-
-    /* Build JSON request — simple snprintf, no JSON library needed */
-    bytes = snprintf(request, sizeof(request),
-        "{\"action\":\"authenticate\",\"user\":\"%s\",\"service\":\"%s\",\"pid\":%d}\n",
-        user, service, getpid());
-
-    if (bytes < 0 || (size_t)bytes >= sizeof(request)) {
-        syslog(LOG_AUTH | LOG_ERR, "pam_touchbridge: request too large");
-        goto cleanup;
-    }
-
-    /* Send request */
-    if (send(fd, request, (size_t)bytes, 0) != bytes) {
-        syslog(LOG_AUTH | LOG_ERR, "pam_touchbridge: send failed: %s", strerror(errno));
-        goto cleanup;
-    }
-
-    /* Receive response */
-    memset(response, 0, sizeof(response));
-    bytes = recv(fd, response, sizeof(response) - 1, 0);
-
-    if (bytes <= 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            syslog(LOG_AUTH | LOG_WARNING,
-                "pam_touchbridge: timeout waiting for companion device");
-            pam_notify(pamh, "TouchBridge: timed out — no response from phone");
-        } else {
-            syslog(LOG_AUTH | LOG_ERR,
-                "pam_touchbridge: recv failed: %s", strerror(errno));
-            pam_notify(pamh, "TouchBridge: connection error");
-        }
-        goto cleanup;
-    }
-
-    response[bytes] = '\0';
-
-    /* Check for success — simple string search, no JSON parser needed */
-    if (strstr(response, "\"result\":\"success\"") != NULL) {
-        syslog(LOG_AUTH | LOG_INFO,
-            "pam_touchbridge: authentication succeeded for user=%s", user);
-        pam_notify(pamh, "TouchBridge: ✓ authenticated");
-        ret = PAM_SUCCESS;
-    } else {
-        syslog(LOG_AUTH | LOG_INFO,
-            "pam_touchbridge: authentication failed for user=%s service=%s reason=%s",
-            user, service, response);
-
-        /*
-         * Show a reason-specific message so the user knows what happened
-         * and what to do, rather than a generic "denied" for all failures.
-         */
-        if (strstr(response, "\"key_invalidated\"") != NULL) {
-            pam_notify(pamh,
-                "TouchBridge: ✗ signing key invalid — open TouchBridge on your "
-                "phone and re-pair (Settings → Unpair → Pair)");
-        } else if (strstr(response, "\"invalid_signature\"") != NULL) {
-            pam_notify(pamh,
-                "TouchBridge: ✗ signature verification failed — try again or re-pair");
-        } else if (strstr(response, "\"challenge_expired\"") != NULL) {
-            pam_notify(pamh,
-                "TouchBridge: ✗ request timed out on phone — try again");
-        } else {
-            pam_notify(pamh, "TouchBridge: ✗ denied — falling through to password");
-        }
-        ret = PAM_AUTH_ERR;
-    }
-
-cleanup:
-    if (fd >= 0) {
-        close(fd);
-    }
-    return ret;
+    free(buffer);
+    syslog(LOG_AUTH | LOG_INFO, "pam_touchbridge: privileged proof %s", success ? "verified" : "rejected");
+    notify(pamh, success ? "TouchBridge: authenticated" : "TouchBridge: no valid enrolled phone proof - using password");
+    return success ? PAM_SUCCESS : PAM_AUTH_ERR;
 }
 
-/*
- * pam_sm_setcred — credential management (no-op for TouchBridge).
- */
-PAM_EXTERN int
-pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char **argv)
+PAM_EXTERN int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char **argv)
 {
-    (void)pamh;
-    (void)flags;
-    (void)argc;
-    (void)argv;
-    return PAM_SUCCESS;
+    (void)pamh; (void)flags; (void)argc; (void)argv; return PAM_SUCCESS;
 }
-
-/*
- * pam_sm_acct_mgmt — account management (no-op for TouchBridge).
- */
-PAM_EXTERN int
-pam_sm_acct_mgmt(pam_handle_t *pamh, int flags, int argc, const char **argv)
+PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags, int argc, const char **argv)
 {
-    (void)pamh;
-    (void)flags;
-    (void)argc;
-    (void)argv;
-    return PAM_SUCCESS;
+    (void)pamh; (void)flags; (void)argc; (void)argv; return PAM_SUCCESS;
 }

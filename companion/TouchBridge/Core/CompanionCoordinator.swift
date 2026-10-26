@@ -2,422 +2,174 @@ import Foundation
 import UIKit
 import CryptoKit
 import UserNotifications
-import os.log
 
-/// Coordinates all companion app components: BLE client, ECDH session,
-/// challenge handling, Secure Enclave signing, and biometric auth.
-///
-/// This is the central integration point on the iOS side.
-public final class CompanionCoordinator: NSObject, @unchecked Sendable {
-    private let logger = Logger(subsystem: "dev.touchbridge", category: "CompanionCoordinator")
-
-    // Components
+/// Owns the pinned Mac session and revocation state. Delegate callbacks run on the main queue.
+@MainActor
+public final class CompanionCoordinator: NSObject {
     public let bleClient: BLEClient
     public let challengeHandler: ChallengeHandler
     public let signingProvider: SigningProvider
     public let localAuth: LocalAuthManager
-
-    // Session state
+    private let defaults: UserDefaults
     private var ephemeralPrivateKey: P256.KeyAgreement.PrivateKey?
-    private var sessionCrypto: SessionCryptoWrapper?
+    private var sessionCrypto: SessionCrypto?
+    private var transcript: Data?
     private var deviceID: String
-
-    // Callbacks
-    public var onConnectionChanged: ((Bool) -> Void)?
-    public var onChallengeReceived: ((String) -> Void)?
-    /// Called when a challenge completes. Parameters: challengeID, success, errorCode (nil on success).
-    public var onChallengeResult: ((String, Bool, ChallengeHandlerError?) -> Void)?
-    public var onPairingComplete: ((String) -> Void)?
-    /// Called when the Mac rejects a pairing request (wrong/expired token, no pairing window).
-    public var onPairingFailed: (() -> Void)?
-
-    // Active pairing session (set by beginPairing, cleared when the Mac responds)
     private var pendingPairingToken: Data?
     private var pendingMacName: String?
-
-    // Challenge received while backgrounded — Face ID can't prompt without UI,
-    // so it's held here and processed when the app becomes active.
+    private var pendingMacKey: Data?
+    private var verified = false
+    private var generation: UInt64 = 0
     private var deferredChallenge: Data?
     private var lifecycleObserver: NSObjectProtocol?
-
-    /// Signing key tag in Keychain/Secure Enclave.
     private let signingKeyTag = "dev.touchbridge.signing"
-
-    public init(
-        signingProvider: SigningProvider? = nil,
-        deviceID: String? = nil
-    ) {
-        self.bleClient = BLEClient()
-        self.localAuth = LocalAuthManager()
-
-        // Use real Secure Enclave on device, mock on simulator
+    public var onConnectionChanged: ((Bool) -> Void)?
+    public var onChallengeReceived: ((String) -> Void)?
+    public var onChallengeResult: ((String, Bool, ChallengeHandlerError?) -> Void)?
+    public var onPairingComplete: ((String) -> Void)?
+    public var onPairingFailed: (() -> Void)?
+    public init(signingProvider: SigningProvider? = nil, deviceID: String? = nil, bleClient: BLEClient? = nil, defaults: UserDefaults = .standard, authenticate: (@MainActor (String) async throws -> Bool)? = nil) {
+        self.bleClient = bleClient ?? BLEClient(); self.localAuth = LocalAuthManager(); self.defaults = defaults
         #if targetEnvironment(simulator)
         self.signingProvider = signingProvider ?? MockSigningProvider()
         #else
         self.signingProvider = signingProvider ?? SecureEnclaveManager()
         #endif
-
-        self.challengeHandler = ChallengeHandler(
-            signingProvider: self.signingProvider,
-            localAuth: self.localAuth,
-            signingKeyTag: "dev.touchbridge.signing"
-        )
-
-        self.deviceID = deviceID ?? (UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString)
-
-        super.init()
-
-        bleClient.delegate = self
-
-        // If already paired, scan only for the paired Mac's unique service UUID.
-        // This prevents connecting to other people's TouchBridge Macs nearby.
-        if let storedUUID = UserDefaults.standard.string(forKey: "pairedMacID"),
-           !storedUUID.isEmpty {
-            bleClient.serviceUUID = storedUUID
-        }
-
-        // Wire challenge handler's send callback to BLE
-        challengeHandler.sendResponse = { [weak self] data in
-            self?.bleClient.sendResponse(data) ?? false
-        }
-
-        // Process any challenge that arrived while backgrounded as soon as
-        // the user opens the app (typically by tapping the notification).
-        lifecycleObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self, let data = self.deferredChallenge else { return }
-            self.deferredChallenge = nil
-            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
-            self.processChallenge(data)
+        self.challengeHandler = ChallengeHandler(signingProvider: self.signingProvider, localAuth: self.localAuth, authenticate: authenticate)
+        self.deviceID = deviceID ?? defaults.string(forKey: "companionDeviceID") ?? UUID().uuidString
+        super.init(); self.bleClient.delegate = self
+        if !defaults.bool(forKey: "pairingRevoked"), defaults.data(forKey: "pairedMacPublicKey") != nil, let service = defaults.string(forKey: "pairedMacID") { self.bleClient.serviceUUID = service }
+        challengeHandler.sendResponse = { [weak self] bytes in guard let self, self.verified, !self.isRevoked else { return false }; return self.bleClient.sendResponse(bytes) }
+        lifecycleObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in guard let self, let data = self.deferredChallenge else { return }; self.deferredChallenge = nil; self.processChallenge(data) }
         }
     }
-
-    deinit {
-        if let observer = lifecycleObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
+    deinit { if let lifecycleObserver { NotificationCenter.default.removeObserver(lifecycleObserver) } }
+    private var isRevoked: Bool { defaults.bool(forKey: "pairingRevoked") }
+    public var isSessionReady: Bool { verified && sessionCrypto != nil && !isRevoked }
+    public var discoveredMacs: [UUID] { bleClient.discoveredPeripheralIDs }
+    public var isConnected: Bool { isSessionReady }
+    public var pairedDeviceID: String { deviceID }
+    public var pairedMacFingerprint: String? { defaults.data(forKey: "pairedMacPublicKey").map { Self.fingerprint($0) } }
+    public var pairedSigningPublicKey: Data? { try? signingProvider.publicKey(for: signingKeyTag) }
+    public var signingFingerprint: String? { pairedSigningPublicKey.map(Self.fingerprint) }
+    private static func fingerprint(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    public func startScanning() { guard !isRevoked, pendingMacKey != nil || defaults.data(forKey: "pairedMacPublicKey") != nil else { return }; bleClient.startScanning() }
+    public func resetConnectionAndScan() { guard !isRevoked else { return }; clearSession(); bleClient.resetConnectionAndScan() }
+    public func connect(to peripheralID: UUID) { guard !isRevoked else { return }; bleClient.connect(to: peripheralID) }
+    public func disconnect() { bleClient.disconnect(); clearSession() }
+    public func cancelCurrentChallenge() { generation &+= 1; deferredChallenge = nil; challengeHandler.cancel(); UNUserNotificationCenter.current().removeAllDeliveredNotifications() }
+    private func clearSession() { cancelCurrentChallenge(); verified = false; sessionCrypto = nil; transcript = nil; ephemeralPrivateKey = nil; challengeHandler.sessionCrypto = nil; challengeHandler.macIdentityHash = nil }
+    /// Revocation is persisted before deletion so a deletion error fails closed across restarts.
+    public func unpair() throws {
+        defaults.set(true, forKey: "pairingRevoked")
+        defaults.set(true, forKey: "unpairIncomplete")
+        bleClient.stopScanning(); bleClient.disconnect(); clearSession()
+        pendingPairingToken = nil; pendingMacName = nil; pendingMacKey = nil
+        for key in ["pairedMacID", "pairedMacName", "pairedMacPublicKey", "companionDeviceID"] { defaults.removeObject(forKey: key) }
+        deviceID = UUID().uuidString
+        try signingProvider.deleteKey(tag: signingKeyTag)
+        defaults.set(false, forKey: "unpairIncomplete")
     }
-
-    // MARK: - Public API
-
-    /// Start scanning for Mac daemon peripherals.
-    public func startScanning() {
-        bleClient.startScanning()
-        logger.info("Started scanning for Mac")
-    }
-
-    /// Force a fresh BLE handshake with the paired Mac.
-    public func resetConnectionAndScan() {
-        sessionCrypto = nil
-        ephemeralPrivateKey = nil
-        challengeHandler.sessionCrypto = nil
-        bleClient.resetConnectionAndScan()
-        logger.info("Reset BLE connection and restarted scanning")
-    }
-
-    /// Connect to a discovered Mac peripheral.
-    public func connect(to peripheralID: UUID) {
-        bleClient.connect(to: peripheralID)
-    }
-
-    /// Disconnect from the Mac.
-    public func disconnect() {
-        bleClient.disconnect()
-        sessionCrypto = nil
-        ephemeralPrivateKey = nil
-    }
-
-    /// Generate or retrieve the signing key pair and return the public key.
     public func getOrCreateSigningKey() throws -> Data {
-        // Try to get existing key first
-        if let existingKey = try? signingProvider.publicKey(for: signingKeyTag) {
-            return existingKey
-        }
-
-        // Generate new key pair
+        guard !isRevoked else { throw ProtocolSecurityError.revoked }
+        if let key = try? signingProvider.publicKey(for: signingKeyTag) { return key }
+        // Never rotate an enrolled key silently.
+        guard pendingPairingToken != nil else { throw SecureEnclaveError.keyInvalidated }
         return try signingProvider.generateKeyPair(tag: signingKeyTag)
     }
-
-    /// Whether ECDH session is established.
-    public var isSessionReady: Bool { sessionCrypto != nil }
-
-    /// List of discovered Mac peripheral UUIDs.
-    public var discoveredMacs: [UUID] { bleClient.discoveredPeripheralIDs }
-
-    /// Whether connected to a Mac.
-    public var isConnected: Bool { bleClient.isConnected }
-
-    // MARK: - ECDH Session Setup
-
+    public func beginPairing(serviceUUID: String, token: Data, macName: String, macPublicKey: Data) {
+        guard UUID(uuidString: serviceUUID) != nil, token.count == 16, (try? P256.Signing.PublicKey(x963Representation: macPublicKey)) != nil else { onPairingFailed?(); return }
+        do { try unpair() } catch { onPairingFailed?(); return }
+        pendingPairingToken = token; pendingMacName = macName; pendingMacKey = macPublicKey
+        bleClient.serviceUUID = serviceUUID; defaults.set(false, forKey: "pairingRevoked"); startScanning()
+    }
+    /// Legacy QR data cannot authorize pairing.
+    public func beginPairing(serviceUUID: String, token: Data, macName: String) { onPairingFailed?() }
     private func performECDHKeyExchange() {
-        // Generate ephemeral key pair
-        let privateKey = P256.KeyAgreement.PrivateKey()
-        ephemeralPrivateKey = privateKey
-
-        // Export public key and send to Mac
-        let publicKeyData = privateKey.publicKey.x963Representation
-        _ = bleClient.sendSessionKey(publicKeyData)
-
-        logger.info("Sent ECDH public key to Mac")
+        guard !isRevoked, pendingMacKey != nil || defaults.data(forKey: "pairedMacPublicKey") != nil else { return }
+        clearSession(); let key = P256.KeyAgreement.PrivateKey(); ephemeralPrivateKey = key
+        if let bytes = try? JSONEncoder().encode(ClientHello(ephemeralKey: key.publicKey.x963Representation)) { _ = bleClient.sendSessionKey(bytes) }
     }
-
-    private func completeECDH(macPublicKeyData: Data) {
-        guard let myPrivate = ephemeralPrivateKey else {
-            logger.error("No ephemeral private key — ECDH not initiated")
-            return
-        }
-
+    private func completeECDH(_ bytes: Data) {
+        guard !isRevoked, let key = ephemeralPrivateKey, let pin = pendingMacKey ?? defaults.data(forKey: "pairedMacPublicKey") else { return }
         do {
-            let macPublicKey = try P256.KeyAgreement.PublicKey(x963Representation: macPublicKeyData)
-            let sharedSecret = try myPrivate.sharedSecretFromKeyAgreement(with: macPublicKey)
-
-            let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
-                using: SHA256.self,
-                salt: Data(),
-                sharedInfo: Data("TouchBridge-v1".utf8),
-                outputByteCount: 32
-            )
-
-            let crypto = SessionCryptoWrapper(
-                encrypt: { plaintext in
-                    let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey)
-                    return sealedBox.combined!
-                },
-                decrypt: { ciphertext in
-                    let sealedBox = try AES.GCM.SealedBox(combined: ciphertext)
-                    return try AES.GCM.open(sealedBox, using: symmetricKey)
-                }
-            )
-
-            sessionCrypto = crypto
-            challengeHandler.sessionCrypto = crypto
-
-            logger.info("ECDH session established with Mac")
-
-            // Immediately identify ourselves to the daemon.
-            // This allows the Mac to recognise us as a previously-paired device
-            // without going through the full pairing ceremony again.
-            sendIdentify(using: crypto)
-        } catch {
-            logger.error("ECDH failed: \(error.localizedDescription)")
-        }
+            guard bytes.count <= 1024 else { throw ProtocolSecurityError.malformed }
+            let hello = try JSONDecoder().decode(ServerHello.self, from: bytes)
+            let boundTranscript = try hello.verify(clientKey: key.publicKey.x963Representation, pinnedIdentity: pin, service: bleClient.serviceUUID)
+            let crypto = try SessionCrypto.deriveSession(myPrivate: key, theirPublic: SessionCrypto.importPublicKey(hello.ephemeralKey))
+            transcript = boundTranscript; sessionCrypto = crypto
+            // No pairing token is released before the QR-pinned signature above verifies.
+            if pendingPairingToken != nil { sendPairingRequest(macName: pendingMacName ?? "Mac") } else { try sendIdentify(crypto) }
+        } catch { clearSession(); bleClient.disconnect(); onPairingFailed?() }
     }
-
-    /// Send an encrypted identify message to the Mac after ECDH.
-    ///
-    /// Wire format: [version=1][type=6(identify)] + AES-GCM encrypted JSON
-    /// The Mac decrypts it, looks up deviceID in the keychain, and marks
-    /// this session as identified so it can receive challenges.
-    private func sendIdentify(using crypto: SessionCryptoWrapper) {
-        struct IdentifyPayload: Codable {
-            let deviceID: String
-            let deviceName: String
-        }
-
-        do {
-            let payload = IdentifyPayload(
-                deviceID: deviceID,
-                deviceName: UIDevice.current.name
-            )
-            let plaintext = try JSONEncoder().encode(payload)
-            let encrypted = try crypto.encrypt(plaintext: plaintext)
-
-            var wireData = Data([1, 6]) // version=1, type=identify(6)
-            wireData.append(encrypted)
-
-            _ = bleClient.sendPairingData(wireData)
-            logger.info("Sent identify for device \(self.deviceID)")
-        } catch {
-            logger.error("Failed to send identify: \(error.localizedDescription)")
-        }
+    private func sendIdentify(_ crypto: SessionCrypto) throws {
+        guard let transcript else { return }
+        let key = try getOrCreateSigningKey(), name = String(UIDevice.current.name.prefix(40))
+        let bytes = try SecureHandshake.possessionBytes(transcript: transcript, deviceID: deviceID, deviceName: name, publicKey: key, token: nil)
+        let signature = try signingProvider.sign(data: bytes, keyTag: signingKeyTag)
+        _ = bleClient.sendPairingData(try WireFormat.seal(.identify, IdentifyMessage(deviceID: deviceID, deviceName: name, signature: signature), crypto: crypto))
     }
-
-    // MARK: - Pairing
-
-    /// Start a pairing session from a scanned/pasted pairing payload.
-    ///
-    /// Locks BLE scanning to the Mac's service UUID from the payload and holds
-    /// the one-time token so `sendPairingRequest` can present it to the daemon.
-    public func beginPairing(serviceUUID: String, token: Data, macName: String) {
-        pendingPairingToken = token
-        pendingMacName = macName
-        bleClient.serviceUUID = serviceUUID
-        startScanning()
-        logger.info("Pairing session started for \(macName)")
-    }
-
-    /// Send pairing request to Mac with our signing public key and the pairing token.
-    ///
-    /// Wire format: [version=1][type=1(pairRequest)] + JSON PairRequestMessage.
     public func sendPairingRequest(macName: String) {
+        guard !isRevoked, let crypto = sessionCrypto, let transcript, let token = pendingPairingToken else { return }
         do {
-            let publicKey = try getOrCreateSigningKey()
-            // Truncate so the wire frame stays under the 256-byte protocol cap
-            let deviceName = String(UIDevice.current.name.prefix(20))
-
-            struct PairRequest: Codable {
-                let deviceName: String
-                let publicKey: Data
-                let deviceID: String
-                let pairingToken: Data?
-            }
-            let request = PairRequest(
-                deviceName: deviceName,
-                publicKey: publicKey,
-                deviceID: deviceID,
-                pairingToken: pendingPairingToken
-            )
-
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = .withoutEscapingSlashes
-            let payload = try encoder.encode(request)
-
-            var wireData = Data([1, 1]) // version=1, type=pairRequest(1)
-            wireData.append(payload)
-            _ = bleClient.sendPairingData(wireData)
-
-            logger.info("Sent pairing request to \(macName)")
-        } catch {
-            logger.error("Failed to send pairing request: \(error.localizedDescription)")
+            let key = try getOrCreateSigningKey(), name = String(UIDevice.current.name.prefix(40))
+            let bytes = try SecureHandshake.possessionBytes(transcript: transcript, deviceID: deviceID, deviceName: name, publicKey: key, token: token)
+            let signature = try signingProvider.sign(data: bytes, keyTag: signingKeyTag)
+            _ = bleClient.sendPairingData(try WireFormat.seal(.pairRequest, PairRequestMessage(deviceName: name, publicKey: key, deviceID: deviceID, pairingToken: token, signature: signature), crypto: crypto))
+        } catch { onPairingFailed?() }
+    }
+    private func processChallenge(_ data: Data) {
+        guard isSessionReady, let (_, payload) = try? challengeHandler.validatedChallenge(data) else { return }
+        let token = generation
+        onChallengeReceived?("\(payload.user) — \(payload.service) (PID \(payload.pid))")
+        Task { @MainActor in
+            guard token == self.generation, self.isSessionReady else { return }
+            let result = await self.challengeHandler.handleChallenge(encryptedData: data, deviceID: self.deviceID)
+            guard token == self.generation, self.isSessionReady else { return }
+            switch result { case .success(let id): self.onChallengeResult?(id, true, nil); case .failed(let error): self.onChallengeResult?("", false, error) }
         }
     }
 }
-
-// MARK: - BLEClientDelegate
-
 extension CompanionCoordinator: BLEClientDelegate {
-
     public func bleClient(_ client: BLEClient, connectionStateChanged connected: Bool, peripheralID: UUID) {
-        logger.info("Connection state: \(connected) for \(peripheralID)")
-
-        if connected {
-            logger.info("Connected; waiting for BLE characteristics before ECDH")
-        } else {
-            sessionCrypto = nil
-            ephemeralPrivateKey = nil
-            challengeHandler.sessionCrypto = nil
-        }
-
-        DispatchQueue.main.async {
-            self.onConnectionChanged?(connected)
-        }
+        if !connected { clearSession(); onConnectionChanged?(false) }
     }
-
-    public func bleClientDidBecomeReadyForSecureSession(_ client: BLEClient, peripheralID: UUID) {
-        logger.info("BLE session is ready; starting ECDH for \(peripheralID)")
-        performECDHKeyExchange()
-
-        // If a pairing session is active, send the pair request now — the
-        // characteristics are guaranteed discovered at this point, unlike on
-        // the raw connect event.
-        if pendingPairingToken != nil {
-            sendPairingRequest(macName: pendingMacName ?? "Mac")
-        }
-    }
-
+    public func bleClientDidBecomeReadyForSecureSession(_ client: BLEClient, peripheralID: UUID) { performECDHKeyExchange() }
+    public func bleClient(_ client: BLEClient, didReceiveSessionKey data: Data, from peripheralID: UUID) { completeECDH(data) }
     public func bleClient(_ client: BLEClient, didReceiveChallenge data: Data, from peripheralID: UUID) {
-        logger.info("Received challenge from Mac")
-
-        DispatchQueue.main.async {
-            self.onChallengeReceived?("Challenge received")
-
-            if UIApplication.shared.applicationState == .active {
-                self.processChallenge(data)
-            } else {
-                // Backgrounded: Face ID can't prompt without UI. Buzz the user with
-                // a notification and handle the challenge when the app opens.
-                self.deferredChallenge = data
-                self.postChallengeNotification(reason: self.challengeReason(from: data))
-            }
+        // A validated session can echo freshness while backgrounded without a
+        // biometric prompt. Revocation/session checks precede every echo.
+        guard isSessionReady, let crypto = sessionCrypto else { return }
+        if let decoded = try? WireFormat.open(data, crypto: crypto), decoded.type == .presencePing {
+            guard let ping = try? WireFormat.decodePayload(PresenceHeartbeatMessage.self, from: decoded.payload), ping.nonce.count == 32,
+                  let pong = try? WireFormat.seal(.presencePong, ping, crypto: crypto), isSessionReady else { return }
+            _ = client.sendResponse(pong)
+            return
+        }
+        guard isSessionReady, let (_, payload) = try? challengeHandler.validatedChallenge(data) else { return }
+        if UIApplication.shared.applicationState == .active { processChallenge(data) } else {
+            deferredChallenge = data
+            let content = UNMutableNotificationContent(); content.title = "TouchBridge"; content.body = "\(payload.user) — \(payload.service)"; content.sound = .default
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "dev.touchbridge.challenge", content: content, trigger: nil))
         }
     }
-
-    /// Run the decrypt → Face ID → sign → respond flow (must start from an active app).
-    private func processChallenge(_ data: Data) {
-        Task { @MainActor in
-            let result = await challengeHandler.handleChallenge(
-                encryptedData: data,
-                deviceID: deviceID
-            )
-
-            switch result {
-            case .success(let challengeID):
-                logger.info("Challenge \(challengeID) approved")
-                self.onChallengeResult?(challengeID, true, nil)
-            case .failed(let error):
-                logger.warning("Challenge failed: \(error)")
-                self.onChallengeResult?("", false, error)
-            }
-        }
-    }
-
-    /// Extract the plaintext reason from a challenge wire frame (only the nonce is encrypted).
-    private func challengeReason(from data: Data) -> String {
-        guard data.count > 2,
-              let msg = try? JSONDecoder().decode(ChallengeIssuedMessageCompanion.self, from: data.dropFirst(2)) else {
-            return "authentication"
-        }
-        return msg.reason
-    }
-
-    private func postChallengeNotification(reason: String) {
-        let macName = UserDefaults.standard.string(forKey: "pairedMacName") ?? "Your Mac"
-        let content = UNMutableNotificationContent()
-        content.title = "Authentication Request"
-        content.body = "\(macName) is asking you to approve: \(reason)"
-        content.sound = .default
-
-        let request = UNNotificationRequest(
-            identifier: "dev.touchbridge.challenge",
-            content: content,
-            trigger: nil
-        )
-        UNUserNotificationCenter.current().add(request)
-        logger.info("Posted background challenge notification")
-    }
-
-    public func bleClient(_ client: BLEClient, didReceiveSessionKey data: Data, from peripheralID: UUID) {
-        logger.info("Received Mac's ECDH public key")
-        completeECDH(macPublicKeyData: data)
-    }
-
     public func bleClient(_ client: BLEClient, didReceivePairingData data: Data, from peripheralID: UUID) {
-        logger.info("Received pairing response from Mac")
-
-        // Response is wire format: [version=1][type=2(pairResponse)] + JSON payload
-        let payload: Data
-        if data.count > 2, data[data.startIndex] == 1 {
-            payload = data.dropFirst(2)
-        } else {
-            payload = data
-        }
-
-        if let json = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
-           let accepted = json["accepted"] as? Bool, accepted {
-            // Persist pairing only once the Mac has accepted.
-            // "pairedMacID" holds the Mac's BLE service UUID (set during beginPairing) —
-            // it locks future scans to this Mac instead of any TouchBridge Mac nearby.
-            UserDefaults.standard.set(bleClient.serviceUUID, forKey: "pairedMacID")
-            if let macName = pendingMacName {
-                UserDefaults.standard.set(macName, forKey: "pairedMacName")
+        guard !isRevoked, let crypto = sessionCrypto else { return }
+        do {
+            let decoded = try WireFormat.open(data, crypto: crypto)
+            guard decoded.type == .pairResponse else { return }
+            let response = try WireFormat.decodePayload(PairResponseMessage.self, from: decoded.payload)
+            guard response.accepted, response.deviceID == deviceID, response.publicKey == (try signingProvider.publicKey(for: signingKeyTag)),
+                  let pin = pendingMacKey ?? defaults.data(forKey: "pairedMacPublicKey") else { throw ProtocolSecurityError.invalidProof }
+            if let pendingMacKey {
+                defaults.set(pendingMacKey, forKey: "pairedMacPublicKey"); defaults.set(client.serviceUUID, forKey: "pairedMacID")
+                defaults.set(pendingMacName, forKey: "pairedMacName"); defaults.set(deviceID, forKey: "companionDeviceID")
             }
-            pendingPairingToken = nil
-
-            let macID = bleClient.serviceUUID
-            DispatchQueue.main.async {
-                self.onPairingComplete?(macID)
-            }
-
-            logger.info("Pairing accepted by Mac")
-        } else {
-            pendingPairingToken = nil
-            DispatchQueue.main.async {
-                self.onPairingFailed?()
-            }
-            logger.warning("Pairing rejected by Mac")
-        }
+            verified = true; challengeHandler.macIdentityHash = Data(SHA256.hash(data: pin)); challengeHandler.sessionCrypto = crypto
+            let newPair = pendingPairingToken != nil
+            pendingPairingToken = nil; pendingMacName = nil; pendingMacKey = nil
+            onConnectionChanged?(true); if newPair { onPairingComplete?(client.serviceUUID) }
+        } catch { clearSession(); onPairingFailed?() }
     }
 }

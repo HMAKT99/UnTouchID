@@ -122,3 +122,39 @@ private func makeDevice(id: String = "test-device-1", name: String = "Test iPhon
     let keyType = attributes?[kSecAttrKeyType as String] as? String
     #expect(keyType == kSecAttrKeyTypeECSECPrimeRandom as String)
 }
+
+/// Distinct services and permanent identity keys must remain isolated under
+/// concurrent native Keychain I/O, including the QR/pairing workflow.
+/// Each item is written once. A failed read is surfaced with its exact status,
+/// never repaired by retrying or overwriting the item.
+@Test func concurrentIsolatedStoreReadback() async throws {
+    let services = (0..<24).map { _ in "dev.touchbridge.test.concurrent.\(UUID().uuidString)" }
+    defer {
+        for service in services {
+            SecItemDelete([kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: Data((service + ".mac-identity-v2").utf8)] as CFDictionary)
+        }
+    }
+    let (_, keyData) = { () -> (SecKey, Data) in
+        let attrs: [String: Any] = [kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom, kSecAttrKeySizeInBits as String: 256]
+        let key = SecKeyCreateRandomKey(attrs as CFDictionary, nil)!
+        return (key, SecKeyCopyExternalRepresentation(SecKeyCopyPublicKey(key)!, nil)! as Data)
+    }()
+    await withTaskGroup(of: String?.self) { group in
+        for index in 0..<24 {
+            group.addTask {
+                let service = services[index]
+                let store = KeychainStore(service: service)
+                defer { try? store.removeAll() }
+                let device = PairedDevice(deviceID: "concurrent-\(index)", publicKey: keyData, displayName: "Fixture", pairedAt: Date())
+                do {
+                    if index.isMultiple(of: 3) { _ = try store.macIdentityPublicKey() }
+                    try store.storePairedDevice(device)
+                    let actual = try store.retrievePairedDevice(deviceID: device.deviceID)
+                    guard actual == device else { return "readback value mismatch for fixture \(index)" }
+                    return nil
+                } catch { return "native Keychain fixture \(index): \(String(reflecting: error))" }
+            }
+        }
+        for await failure in group { if let failure { Issue.record(Comment(rawValue: failure)) } }
+    }
+}

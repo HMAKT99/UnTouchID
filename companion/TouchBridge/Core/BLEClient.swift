@@ -5,6 +5,7 @@ import os.log
 // MARK: - Delegate Protocol
 
 /// Events emitted by the BLE client to the companion app coordinator.
+@MainActor
 public protocol BLEClientDelegate: AnyObject {
     /// Connection state changed.
     func bleClient(_ client: BLEClient, connectionStateChanged connected: Bool, peripheralID: UUID)
@@ -51,6 +52,7 @@ struct DiscoveredPeripheral {
 /// Discovers and connects to the Mac daemon's GATT service.
 /// Handles characteristic subscriptions (notify) and writes.
 /// Supports background BLE restoration via `CBCentralManagerOptionRestoreIdentifierKey`.
+@MainActor
 public class BLEClient: NSObject {
     private let logger = Logger(subsystem: "dev.touchbridge", category: "BLEClient")
 
@@ -73,6 +75,10 @@ public class BLEClient: NSObject {
     private var pendingNotifyCharacteristics: Set<CBUUID> = []
     private var didNotifyReady = false
     private var shouldScanWhenReady = false
+    private var connectionAllowed = false
+    private var assemblers: [CBUUID: BLEReassembler] = [:]
+    private var outbound: [(CBCharacteristic, Data)] = []
+    private var writeInFlight = false
     private var isConnecting = false
 
     public weak var delegate: BLEClientDelegate?
@@ -94,8 +100,9 @@ public class BLEClient: NSObject {
     /// Defaults to the shared protocol UUID (used only during initial discovery).
     public var serviceUUID: String = TouchBridgeConstants.serviceUUID
 
-    public override init() {
+    public init(enableBluetooth: Bool = true) {
         super.init()
+        guard enableBluetooth else { return }
         self.centralManager = CBCentralManager(
             delegate: self,
             queue: nil,
@@ -109,6 +116,7 @@ public class BLEClient: NSObject {
 
     /// Start scanning for TouchBridge Mac peripherals.
     public func startScanning() {
+        connectionAllowed = true
         shouldScanWhenReady = true
 
         guard isReady else {
@@ -141,7 +149,7 @@ public class BLEClient: NSObject {
 
     /// Connect to a discovered peripheral.
     public func connect(to peripheralID: UUID) {
-        guard let info = discoveredPeripherals[peripheralID] else {
+        guard connectionAllowed, let info = discoveredPeripherals[peripheralID] else {
             logger.warning("Cannot connect: peripheral \(peripheralID) not discovered")
             return
         }
@@ -173,6 +181,10 @@ public class BLEClient: NSObject {
 
     /// Disconnect from the currently connected peripheral.
     public func disconnect() {
+        connectionAllowed = false
+        stopScanning()
+        for info in discoveredPeripherals.values { centralManager.cancelPeripheralConnection(info.peripheral) }
+        outbound.removeAll(); writeInFlight = false; assemblers.removeAll()
         guard let peripheral = connectedPeripheral else { return }
         centralManager.cancelPeripheralConnection(peripheral)
     }
@@ -185,9 +197,7 @@ public class BLEClient: NSObject {
             return false
         }
 
-        // Use writeWithResponse for reliability
-        peripheral.writeValue(data, for: char, type: .withResponse)
-        return true
+        return sendFramed(data, peripheral: peripheral, characteristic: char)
     }
 
     /// Send ECDH session key to the Mac.
@@ -198,8 +208,7 @@ public class BLEClient: NSObject {
             return false
         }
 
-        peripheral.writeValue(data, for: char, type: .withResponse)
-        return true
+        return sendFramed(data, peripheral: peripheral, characteristic: char)
     }
 
     /// Send pairing data to the Mac.
@@ -210,8 +219,16 @@ public class BLEClient: NSObject {
             return false
         }
 
-        peripheral.writeValue(data, for: char, type: .withResponse)
-        return true
+        return sendFramed(data, peripheral: peripheral, characteristic: char)
+    }
+
+    private func sendFramed(_ data: Data, peripheral: CBPeripheral, characteristic: CBCharacteristic) -> Bool {
+        guard connectionAllowed, let frames = try? BLEFraming.fragmentsForAcknowledgedWrite(data, maximumWithResponse: peripheral.maximumWriteValueLength(for: .withResponse), maximumWithoutResponse: peripheral.maximumWriteValueLength(for: .withoutResponse)), outbound.count + frames.count <= 2048, outbound.reduce(0, { $0 + $1.1.count }) + frames.reduce(0, { $0 + $1.count }) <= 65536 else { return false }
+        outbound.append(contentsOf: frames.map { (characteristic, $0) }); flushOutbound(); return true
+    }
+    private func flushOutbound() {
+        guard !writeInFlight, connectionAllowed, let peripheral = connectedPeripheral, let frame = outbound.first else { return }
+        writeInFlight = true; peripheral.writeValue(frame.1, for: frame.0, type: .withResponse)
     }
 
     /// Get average RSSI for a discovered peripheral.
@@ -253,6 +270,7 @@ public class BLEClient: NSObject {
     }
 
     private func clearConnectionState() {
+        outbound.removeAll(); writeInFlight = false; assemblers.removeAll()
         sessionKeyChar = nil
         challengeChar = nil
         responseChar = nil
@@ -275,9 +293,14 @@ public class BLEClient: NSObject {
 
 // MARK: - CBCentralManagerDelegate
 
-extension BLEClient: CBCentralManagerDelegate {
+extension BLEClient: @preconcurrency CBCentralManagerDelegate {
 
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        if central.state != .poweredOn {
+            let disconnected = connectedPeripheral?.identifier
+            connectedPeripheral = nil; isConnecting = false; clearConnectionState()
+            if let disconnected { delegate?.bleClient(self, connectionStateChanged: false, peripheralID: disconnected) }
+        }
         switch central.state {
         case .poweredOn:
             logger.info("Bluetooth powered on")
@@ -312,7 +335,7 @@ extension BLEClient: CBCentralManagerDelegate {
                 discoveredPeripherals[peripheral.identifier] = DiscoveredPeripheral(peripheral: peripheral)
                 if peripheral.state == .connected {
                     centralManager.cancelPeripheralConnection(peripheral)
-                    shouldScanWhenReady = true
+                    shouldScanWhenReady = connectionAllowed
                 }
             }
         }
@@ -342,6 +365,7 @@ extension BLEClient: CBCentralManagerDelegate {
         _ central: CBCentralManager,
         didConnect peripheral: CBPeripheral
     ) {
+        guard connectionAllowed else { centralManager.cancelPeripheralConnection(peripheral); return }
         let id = peripheral.identifier
         logger.info("Connected to peripheral: \(id)")
         isConnecting = false
@@ -387,7 +411,7 @@ extension BLEClient: CBCentralManagerDelegate {
 
 // MARK: - CBPeripheralDelegate
 
-extension BLEClient: CBPeripheralDelegate {
+extension BLEClient: @preconcurrency CBPeripheralDelegate {
 
     public func peripheral(
         _ peripheral: CBPeripheral,
@@ -456,7 +480,11 @@ extension BLEClient: CBPeripheralDelegate {
             return
         }
 
-        guard let data = characteristic.value else { return }
+        guard connectionAllowed, connectedPeripheral?.identifier == peripheral.identifier, let frame = characteristic.value else { return }
+        var assembler = assemblers[characteristic.uuid] ?? BLEReassembler()
+        let complete: Data?
+        do { complete = try assembler.accept(frame); assemblers[characteristic.uuid] = assembler } catch { assemblers.removeValue(forKey: characteristic.uuid); return }
+        guard let data = complete else { return }
         let peripheralID = peripheral.identifier
 
         let challengeUUID = CBUUID(string: TouchBridgeConstants.challengeCharUUID)
@@ -480,6 +508,10 @@ extension BLEClient: CBPeripheralDelegate {
         didWriteValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        guard connectedPeripheral?.identifier == peripheral.identifier, writeInFlight else { return }
+        writeInFlight = false
+        if !outbound.isEmpty { outbound.removeFirst() }
+        if error != nil { outbound.removeAll() } else { flushOutbound() }
         if let error {
             logger.error("Write failed for \(characteristic.uuid): \(error.localizedDescription)")
         }

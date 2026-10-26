@@ -1,63 +1,22 @@
-# TouchBridge Architecture
+# Protocol v2 architecture
 
-## Component Overview
+PAM is the privileged verifier; the user daemon is untrusted BLE transport.
+Root pins and module code live under `/Library/Security/TouchBridge`, outside
+user-writable Homebrew ancestors. Enrollment is explicit administration.
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    macOS                             │
-│                                                      │
-│  ┌──────────┐    Unix Socket    ┌───────────────┐   │
-│  │ PAM      │ ───────────────→  │ touchbridged  │   │
-│  │ Module   │                   │ (daemon)      │   │
-│  └──────────┘                   │               │   │
-│                                 │ ┌───────────┐ │   │
-│  ┌──────────┐    Unix Socket    │ │ Socket    │ │   │
-│  │ Auth     │ ───────────────→  │ │ Server    │ │   │
-│  │ Plugin   │                   │ └───────────┘ │   │
-│                                 │ ┌───────────┐ │   │
-│  ┌──────────┐    NMH stdin/out  │ │ Challenge │ │   │
-│  │ Browser  │ ───────────────→  │ │ Manager   │ │   │
-│  │ Extension│                   │ └───────────┘ │   │
-│  └──────────┘                   │ ┌───────────┐ │   │
-│                                 │ │ BLE       │ │   │
-│                                 │ │ Server    │ │   │
-│                                 │ └─────┬─────┘ │   │
-│                                 └───────┼───────┘   │
-│                                         │ BLE       │
-└─────────────────────────────────────────┼───────────┘
-                                          │
-┌─────────────────────────────────────────┼───────────┐
-│                  iPhone/iPad            │           │
-│                                         │           │
-│                                 ┌───────┴─────┐    │
-│                                 │ BLE Client  │    │
-│                                 └───────┬─────┘    │
-│                                 ┌───────┴─────┐    │
-│                                 │ Challenge   │    │
-│                                 │ Handler     │    │
-│                                 └───────┬─────┘    │
-│                          ┌──────────────┼────────┐ │
-│                          │              │        │ │
-│                    ┌─────┴─────┐  ┌─────┴──────┐ │ │
-│                    │ LAContext │  │ Secure     │ │ │
-│                    │ (Face ID) │  │ Enclave    │ │ │
-│                    └───────────┘  └────────────┘ │ │
-│                                                    │
-└────────────────────────────────────────────────────┘
-```
+The QR pins a persistent Mac identity. Signed ECDH binds both ephemeral keys and
+service context. Pairing is encrypted/authenticated, the phone proves possession,
+and token consumption is atomic. Reconnect requires fresh possession proof.
+Bounded MTU-aware frames carry complete protected messages.
 
-## Data Flow: sudo authentication
+PAM chooses and retains canonical context/nonce. The phone validates those bytes,
+displays their user/service fields, and signs the complete payload. The daemon
+returns device ID and DER signature; root PAM independently verifies its retained
+bytes against root pins. It never trusts returned context or a boolean result.
+See [format](pam-evidence-v2.md). Diagnostics use a separate action; simulator/web
+cannot authorize PAM. The Authorization Plugin fails closed.
 
-1. User runs `sudo echo test`
-2. PAM loads `pam_touchbridge.so`
-3. PAM module connects to daemon socket (`~/Library/Application Support/TouchBridge/daemon.sock`)
-4. SocketServer receives request, calls `DaemonCoordinator.authenticateFromPAM()`
-5. DaemonCoordinator finds connected companion via BLE
-6. ChallengeManager generates 32-byte nonce with 10s expiry
-7. Nonce encrypted with AES-256-GCM (ECDH session key) and sent via BLE
-8. CompanionCoordinator receives, decrypts, shows Face ID prompt
-9. On success, SecureEnclaveManager signs nonce (ECDSA P-256)
-10. Signature sent back via BLE
-11. ChallengeManager verifies signature against pinned public key
-12. Result returned through continuation → SocketServer → PAM module
-13. PAM returns `PAM_SUCCESS` or `PAM_AUTH_ERR`
+Unpair disables signing/reconnect before cleanup, cancels stale callbacks and
+persists fail-closed state on cleanup failure. Root revocation is separate.
+Auto-lock follows verified peers and confirms actual lock state. Fixture/build
+success remains separate from real-device/native acceptance.

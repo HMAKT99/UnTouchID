@@ -13,7 +13,9 @@ public enum LocalAuthError: Error, Sendable {
 /// Important: `LAContext.evaluatePolicy` must be called on the main thread.
 /// This manager handles the main-thread dispatch internally.
 public final class LocalAuthManager: @unchecked Sendable {
+    private var activeContext: LAContext?
     public init() {}
+    @MainActor public func cancel() { activeContext?.invalidate(); activeContext = nil }
 
     /// Prompt the user for biometric authentication.
     ///
@@ -23,7 +25,10 @@ public final class LocalAuthManager: @unchecked Sendable {
     /// - Throws: `LocalAuthError` on failure or cancellation.
     @MainActor
     public func authenticateUser(reason: String) async throws -> Bool {
+        activeContext?.invalidate()
         let context = LAContext()
+        activeContext = context
+        defer { if activeContext === context { activeContext = nil } }
         context.localizedCancelTitle = "Deny"
 
         var error: NSError?
