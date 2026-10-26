@@ -1,6 +1,6 @@
 cask "touchbridge" do
-  version "1.1.2"
-  sha256 "da7af193723ad1d5ffd4739033c440916e9175183dc82e70899c0bcbbbf4b1e9"
+  version "2.0.0"
+  sha256 "f471085e9af4896442ef47b4cf78ebacb37367f8118d144991aed7fcdf56e4c6"
 
   url "https://github.com/HMAKT99/UnTouchID/releases/download/v#{version}/TouchBridge-#{version}.pkg"
   name "TouchBridge"
@@ -8,13 +8,6 @@ cask "touchbridge" do
   homepage "https://github.com/HMAKT99/UnTouchID"
 
   depends_on macos: :ventura
-
-  # The published 1.1.2 artifact predates this security migration. Do not let
-  # this source cask install v1 with v2 helper paths or security expectations.
-  # Remove this guard only alongside a reviewed v2 URL and matching digest.
-  preflight do
-    odie "No reviewed v2 package is published yet. Build this security checkout and follow docs/setup.md."
-  end
 
   pkg "TouchBridge-#{version}.pkg"
 

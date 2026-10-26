@@ -130,6 +130,10 @@ exit 0
 POSTINSTALL
 chmod +x "$PKG_SCRIPTS/postinstall"
 
+# Strip extended attributes (e.g. com.apple.provenance) so pkgbuild doesn't
+# emit AppleDouble ._* files into /Library/Security/TouchBridge.
+xattr -cr "$PKG_ROOT" "$PKG_SCRIPTS"
+
 pkgbuild \
     --root "$PKG_ROOT" \
     --scripts "$PKG_SCRIPTS" \
