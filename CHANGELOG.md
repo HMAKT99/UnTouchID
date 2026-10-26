@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.0.0] — 2026-10-26
 
 ### Security
 - PAM verifies fresh canonical phone signatures against root-enrolled keys;
@@ -27,8 +27,9 @@
   shared native boundary, without retries; fix socket listener descriptor ownership
   across cancellation/restart. Regression tests reproduce both failures.
 - Disable Authorization Plugin creation at its C entry until a privileged v2
-  verifier exists. The source cask refuses the old package until v2 release
-  metadata is available; source installation remains supported.
+  verifier exists.
+- Homebrew cask now installs the v2 package. Release packages no longer contain
+  stray AppleDouble (`._*`) files.
 
 ## [1.1.2] — 2026-07-17
 

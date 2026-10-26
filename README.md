@@ -3,12 +3,17 @@
 Use an iPhone's Face ID or Touch ID to approve Mac authentication. The privileged
 PAM module verifies the phone's signature; the user daemon transports evidence.
 
-This checkout contains an **unreleased protocol v2 security migration**. Rebuild
-both ends, re-pair, and explicitly enroll verified public-key fingerprints.
-The published Homebrew 1.1.2 package does not contain this patch. Compilation and
-fixture tests are not real-device acceptance.
+**v2.0.0 is a breaking protocol v2 security release.** Upgrading from 1.x means
+rebuilding the iPhone app, re-pairing, and explicitly enrolling verified
+public-key fingerprints.
 
-## Build and install
+## Install with Homebrew
+
+```bash
+brew install --cask touchbridge
+```
+
+## Build and install from source
 
 Requires macOS 13+, Xcode with iOS SDK, and a physical iPhone for biometric use.
 Homebrew installs Mac tools, not the iPhone companion App.

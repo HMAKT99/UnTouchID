@@ -37,7 +37,7 @@ counts and reports success only after positive macOS lock-state readback.
 
 ## Verification limits
 
-This is an unreleased source migration, not an attestation of Homebrew 1.1.2.
+This describes the 2.0.0 release; it is not an attestation of earlier 1.x packages.
 V1 peers require re-pairing. Android/Watch/web/simulator/browser diagnostics and
 the Authorization Plugin are not privileged v2 paths; the plugin fails closed.
 Root/kernel compromise and hardware-bound Apple authentication are outside scope.

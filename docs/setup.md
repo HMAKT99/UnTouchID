@@ -1,12 +1,11 @@
 # Protocol v2 migration
 
-This unreleased patch requires new Mac and iPhone builds and re-pairing. The
-published Homebrew 1.1.2 package does not contain these changes. Keep independent
-password/admin recovery; do not authorize enrollment via vulnerable legacy PAM.
-The source cask refuses installation until a reviewed v2 package URL and digest
-replace the v1 release metadata; source installation remains available below.
+TouchBridge 2.0.0 requires new Mac and iPhone builds and re-pairing. Keep
+independent password/admin recovery; do not authorize enrollment via vulnerable
+legacy PAM.
 
-Build as a normal user, then review before administrator installation:
+Install the Mac tools with Homebrew (`brew install --cask touchbridge`), or
+build as a normal user and review before administrator installation:
 
 ```bash
 cd daemon && swift build -c release --jobs 2
