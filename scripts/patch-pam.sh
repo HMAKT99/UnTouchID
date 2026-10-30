@@ -45,6 +45,14 @@ tb_disable_sudo
 tb_disable_screensaver
 
 tb_enable_sudo "prompt"
+
+# On macOS 27 authorizationhost does not load third-party PAM modules for the
+# screensaver service, so the hook is never called (#42). Password unlock is
+# unaffected either way.
+if [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 27 ]; then
+    _tb_warn "macOS 27+: lock-screen unlock with the phone is not supported yet (#42)."
+    _tb_warn "The screensaver hook is harmless, but the lock screen will keep asking for your password."
+fi
 tb_enable_screensaver "prompt"
 
 echo ""

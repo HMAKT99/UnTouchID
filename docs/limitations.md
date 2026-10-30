@@ -18,6 +18,12 @@ Unpair cancels signing/reconnect/late callbacks; cleanup failure stays disabled
 across restart and Settings permits retry. Mac root-pin removal is a separate
 administrator step.
 
+Lock-screen unlock is not supported on macOS 27. There, `authorizationhost`
+runs the `screensaver` PAM service and never loads third-party modules, so the
+phone is never asked and the password is required (#42). `sudo` is unaffected.
+A fix likely needs the Authorization Plugin, which is disabled until it has a
+v2 verifier.
+
 Auto-lock arms only after a verified companion has been present and the last
 verified device leaves. Actual Lock Screen requests require positive lock-state
 readback. Missing mechanisms, permission denials or unconfirmed state are errors,
