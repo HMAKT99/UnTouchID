@@ -4,8 +4,10 @@ TouchBridge 2.0.0 requires new Mac and iPhone builds and re-pairing. Keep
 independent password/admin recovery; do not authorize enrollment via vulnerable
 legacy PAM.
 
-Install the Mac tools with Homebrew (`brew install --cask touchbridge`), or
-build as a normal user and review before administrator installation:
+Install the Mac tools with Homebrew (`brew tap HMAKT99/touchbridge`, then
+`brew trust HMAKT99/touchbridge` on Homebrew 7+, then
+`brew install --cask touchbridge`), or build as a normal user and review
+before administrator installation:
 
 ```bash
 cd daemon && swift build -c release --jobs 2
