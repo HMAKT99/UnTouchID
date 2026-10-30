@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.0.1] — 2026-10-30
+
+### Fixed
+- macOS 27: `touchbridged` and `touchbridge-test` embed an `Info.plist` with the
+  Bluetooth usage description, so macOS grants Bluetooth and pairing works (#41,
+  originally #37).
+- Release binaries are re-signed ad hoc so the embedded `Info.plist` doesn't
+  trigger "Code Signature Invalid".
+
+### Changed
+- Lock-screen unlock is documented as unsupported on macOS 27 (#36, #42).
+  `patch-pam.sh` warns before enabling the screensaver hook there, and the
+  setup wizard no longer advertises it.
+
 ## [2.0.0] — 2026-10-26
 
 ### Security

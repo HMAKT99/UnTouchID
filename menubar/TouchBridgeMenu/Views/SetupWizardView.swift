@@ -86,7 +86,6 @@ struct SetupWizardView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 FeatureRow(icon: "lock.shield", text: "Authenticate sudo with Face ID or fingerprint")
-                FeatureRow(icon: "display", text: "Unlock screensaver without typing password")
                 FeatureRow(icon: "iphone", text: "Uses the protocol v2 iPhone companion")
                 FeatureRow(icon: "key", text: "No $199 Magic Keyboard needed")
             }

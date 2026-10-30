@@ -33,6 +33,12 @@ swift build -c release 2>&1 | tail -1
 cp .build/release/touchbridged "$BUILD_DIR/"
 cp .build/release/touchbridge-test "$BUILD_DIR/"
 cp .build/release/touchbridge-nmh "$BUILD_DIR/"
+# Replace the linker's ad-hoc signature with a regular one; the linker-signed
+# variant can be rejected as "Code Signature Invalid" once the binaries embed
+# an Info.plist (#41).
+for bin in touchbridged touchbridge-test touchbridge-nmh; do
+    codesign --force -s - "$BUILD_DIR/$bin"
+done
 echo "  ✓ Daemon binaries built"
 
 # 2. Build PAM module
