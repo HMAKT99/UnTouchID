@@ -101,6 +101,11 @@ info "Installing daemon binary..."
 mkdir -p "$(dirname "$DAEMON_BIN")"
 cp "$DAEMON_BUILD" "$DAEMON_BIN"
 chmod 755 "$DAEMON_BIN"
+# Re-sign after copy: the linker's own ad-hoc "linker-signed" signature
+# (produced because the build embeds an Info.plist via -sectcreate for
+# NSBluetoothAlwaysUsageDescription) is rejected as "Code Signature Invalid"
+# on some macOS/Xcode versions. A plain ad-hoc `codesign` pass fixes this.
+codesign --force -s - "$DAEMON_BIN" 2>/dev/null || true
 info "Installed $DAEMON_BIN"
 
 info "Installing PAM module..."
