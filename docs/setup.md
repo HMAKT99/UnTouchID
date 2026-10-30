@@ -50,7 +50,7 @@ while authenticating. Activation checks root trust and the absolute module path.
 
 ## Acceptance and revocation
 
-Verify real iPhone approve/deny/expiry/unavailability, replay rejection, root
+Follow the [on-device acceptance checklist](acceptance-v2.md). Verify real iPhone approve/deny/expiry/unavailability, replay rejection, root
 revocation and password fallback. Native fixture or mocked BLE tests are not
 physical Secure Enclave/PAM acceptance. Simulator/web/browser diagnostic results
 cannot authorize PAM. The v2 `tests/e2e-validation.sh` runs isolated suites only; older versions
