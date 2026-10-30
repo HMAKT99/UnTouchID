@@ -10,6 +10,8 @@ public-key fingerprints.
 ## Install with Homebrew
 
 ```bash
+brew tap HMAKT99/touchbridge
+brew trust HMAKT99/touchbridge   # Homebrew 7+ only loads trusted third-party taps
 brew install --cask touchbridge
 ```
 
