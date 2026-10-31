@@ -31,34 +31,66 @@ public final class ChallengeHandler {
         guard let session = sessionCrypto else { return .failed(.noSession) }
         let message: AuthorizationChallengeMessage
         let payload: AuthorizationPayload
-        do { (message, payload) = try validatedChallenge(encryptedData) } catch { return .failed(.parseFailed) }
-        let now = UInt64(Date().timeIntervalSince1970)
-        seen = seen.filter { $0.value > now }
-        guard seen[payload.nonce] == nil, seen.count < 512 else { return .failed(.parseFailed) }
-        // Consume before prompting, including denied/cancelled attempts.
-        seen[payload.nonce] = payload.expiry
-        cancel(); let token = generation
-        let reason = "TouchBridge: \(payload.user) — \(payload.service) (PID \(payload.pid))"
         do {
-            let approved: Bool
-            if let authenticate { approved = try await authenticate(reason) } else { approved = try await localAuth.authenticateUser(reason: reason) }
+            (message, payload) = try validatedChallenge(encryptedData)
+        } catch {
+            return .failed(.parseFailed)
+        }
+
+        // Consume before prompting, including denied/cancelled attempts.
+        guard registerNonceIfFresh(nonce: payload.nonce, expiry: payload.expiry) else {
+            return .failed(.parseFailed)
+        }
+
+        cancel()
+        let token = generation
+        let reason = "TouchBridge: \(payload.user) — \(payload.service) (PID \(payload.pid))"
+
+        do {
+            let approved = try await performAuthentication(reason: reason)
             guard approved, token == generation, sessionCrypto != nil else { return .failed(.biometricDenied) }
             try payload.validate(macIdentityHash: macIdentityHash ?? Data())
             #if targetEnvironment(simulator)
             guard payload.purpose != .pam else { return .failed(.signingFailed) }
             #endif
+
             let signature = try signingProvider.sign(data: message.authorization, keyTag: signingKeyTag)
             guard token == generation, sessionCrypto != nil else { return .failed(.noSession) }
             try payload.validate(macIdentityHash: macIdentityHash ?? Data())
+
             let response = ChallengeResponseMessage(challengeID: message.challengeID, signature: signature, deviceID: deviceID)
             let bytes = try WireFormat.seal(.challengeResponse, response, crypto: session)
             guard sendResponse?(bytes) == true else { return .failed(.sendFailed) }
             return .success(challengeID: message.challengeID)
         } catch SecureEnclaveError.keyInvalidated {
             guard token == generation else { return .failed(.noSession) }
-            if let bytes = try? WireFormat.seal(.error, ErrorMessage(code: ErrorCode.keyInvalidated.rawValue, description: "key_invalidated", challengeID: message.challengeID), crypto: session) { _ = sendResponse?(bytes) }
+            sendErrorResponse(code: .keyInvalidated, description: "key_invalidated", challengeID: message.challengeID, session: session)
             return .failed(.keyInvalidated)
-        } catch { return .failed(.biometricDenied) }
+        } catch {
+            return .failed(.biometricDenied)
+        }
+    }
+
+    private func registerNonceIfFresh(nonce: Data, expiry: UInt64) -> Bool {
+        let now = UInt64(Date().timeIntervalSince1970)
+        seen = seen.filter { $0.value > now }
+        guard seen[nonce] == nil, seen.count < 512 else { return false }
+        seen[nonce] = expiry
+        return true
+    }
+
+    private func performAuthentication(reason: String) async throws -> Bool {
+        if let authenticate {
+            return try await authenticate(reason)
+        }
+        return try await localAuth.authenticateUser(reason: reason)
+    }
+
+    private func sendErrorResponse(code: ErrorCode, description: String, challengeID: String, session: SessionCrypto) {
+        let errorMsg = ErrorMessage(code: code.rawValue, description: description, challengeID: challengeID)
+        if let bytes = try? WireFormat.seal(.error, errorMsg, crypto: session) {
+            _ = sendResponse?(bytes)
+        }
     }
 }
 public enum ChallengeHandlerResult: Sendable { case success(challengeID: String), failed(ChallengeHandlerError) }
