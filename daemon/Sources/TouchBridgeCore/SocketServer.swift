@@ -210,30 +210,16 @@ public final class SocketServer: @unchecked Sendable {
     private func handleConnection(fd: Int32) async {
         defer { close(fd) }
 
-        // Newline framing, bounded reads and a socket deadline reject truncated input.
-        var socketTimeout = timeval(tv_sec: 3, tv_usec: 0)
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &socketTimeout, socklen_t(MemoryLayout<timeval>.size))
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &socketTimeout, socklen_t(MemoryLayout<timeval>.size))
-        var requestData = Data()
-        var complete = false
-        let readDeadline = Date().addingTimeInterval(3)
-        while requestData.count < 4096, Date() < readDeadline {
-            var chunk = [UInt8](repeating: 0, count: min(512, 4096 - requestData.count))
-            let count = recv(fd, &chunk, chunk.count, 0)
-            if count < 0 && errno == EINTR { continue }
-            guard count > 0 else { break }
-            if let newline = chunk[..<count].firstIndex(of: 10) {
-                guard newline == count - 1 else { sendResponse(fd: fd, response: .failure("invalid_frame")); return }
-                requestData.append(contentsOf: chunk[..<newline]); complete = true; break
-            }
-            requestData.append(contentsOf: chunk[..<count])
+        let (requestData, errorReason) = readFramedRequest(fd: fd)
+        guard let data = requestData else {
+            sendResponse(fd: fd, response: .failure(errorReason ?? "incomplete_request"))
+            return
         }
-        guard complete, !requestData.isEmpty else { sendResponse(fd: fd, response: .failure("incomplete_request")); return }
 
         // Parse request
         let request: PAMRequest
         do {
-            request = try JSONDecoder().decode(PAMRequest.self, from: requestData)
+            request = try JSONDecoder().decode(PAMRequest.self, from: data)
         } catch {
             logger.warning("Failed to parse PAM request: \(error.localizedDescription)")
             sendResponse(fd: fd, response: .failure("parse_error"))
@@ -246,26 +232,61 @@ public final class SocketServer: @unchecked Sendable {
         }
 
         logger.info("PAM auth request: user=\(request.user) service=\(request.service) pid=\(request.pid)")
-
         let timeout = policyEngine.authTimeout()
-        let response: PAMResponse
+
         if request.action == "authenticate" {
-            guard request.evidenceVersion == 2, let challenge = request.challenge,
-                  let handler = authHandler as? PAMProofAuthHandler else {
-                sendResponse(fd: fd, response: .failure("evidence_v2_required")); return
-            }
-            if let proof = await handler.authenticateProof(challenge: challenge, timeout: timeout) {
-                response = PAMResponse(result: "success", proof: proof)
-            } else { response = .failure("invalid_or_missing_proof") }
+            await handleAuthenticate(fd: fd, request: request, timeout: timeout)
         } else {
-            guard request.evidenceVersion == nil, request.challenge == nil else {
-                sendResponse(fd: fd, response: .failure("diagnostic_evidence_forbidden")); return
+            await handleDiagnostic(fd: fd, request: request, timeout: timeout)
+        }
+    }
+
+    private func readFramedRequest(fd: Int32) -> (data: Data?, errorReason: String?) {
+        // Newline framing, bounded reads and a socket deadline reject truncated input.
+        var socketTimeout = timeval(tv_sec: 3, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &socketTimeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &socketTimeout, socklen_t(MemoryLayout<timeval>.size))
+        var requestData = Data()
+        let readDeadline = Date().addingTimeInterval(3)
+        while requestData.count < 4096, Date() < readDeadline {
+            var chunk = [UInt8](repeating: 0, count: min(512, 4096 - requestData.count))
+            let count = recv(fd, &chunk, chunk.count, 0)
+            if count < 0 && errno == EINTR { continue }
+            guard count > 0 else { break }
+            if let newline = chunk[..<count].firstIndex(of: 10) {
+                guard newline == count - 1 else { return (nil, "invalid_frame") }
+                requestData.append(contentsOf: chunk[..<newline])
+                return (requestData, nil)
             }
-            let (success, reason) = await authHandler.authenticateFromPAM(user: request.user, service: request.service, pid: request.pid, timeout: timeout)
-            response = success ? PAMResponse.success : .failure(reason ?? "authentication_failed")
+            requestData.append(contentsOf: chunk[..<count])
+        }
+        return (nil, "incomplete_request")
+    }
+
+    private func handleAuthenticate(fd: Int32, request: PAMRequest, timeout: TimeInterval) async {
+        guard request.evidenceVersion == 2, let challenge = request.challenge,
+              let handler = authHandler as? PAMProofAuthHandler else {
+            sendResponse(fd: fd, response: .failure("evidence_v2_required"))
+            return
+        }
+        let response: PAMResponse
+        if let proof = await handler.authenticateProof(challenge: challenge, timeout: timeout) {
+            response = PAMResponse(result: "success", proof: proof)
+        } else {
+            response = .failure("invalid_or_missing_proof")
         }
         sendResponse(fd: fd, response: response)
+        logger.info("PAM auth result: user=\(request.user) service=\(request.service) result=\(response.result)")
+    }
 
+    private func handleDiagnostic(fd: Int32, request: PAMRequest, timeout: TimeInterval) async {
+        guard request.evidenceVersion == nil, request.challenge == nil else {
+            sendResponse(fd: fd, response: .failure("diagnostic_evidence_forbidden"))
+            return
+        }
+        let (success, reason) = await authHandler.authenticateFromPAM(user: request.user, service: request.service, pid: request.pid, timeout: timeout)
+        let response = success ? PAMResponse.success : .failure(reason ?? "authentication_failed")
+        sendResponse(fd: fd, response: response)
         logger.info("PAM auth result: user=\(request.user) service=\(request.service) result=\(response.result)")
     }
 
