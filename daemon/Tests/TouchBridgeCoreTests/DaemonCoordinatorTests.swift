@@ -10,15 +10,29 @@ final class MockBLEServer: BLEServerInterface, @unchecked Sendable {
     private let lock = NSLock()
     private var challenges: [(data: Data, centralID: UUID)] = []
     private var pairs: [(data: Data, centralID: UUID)] = []
-    var sendSucceeds = true
+    private var _sendSucceeds = true
+    var sendSucceeds: Bool {
+        get { lock.withLock { _sendSucceeds } }
+        set { lock.withLock { _sendSucceeds = newValue } }
+    }
     var sentChallenges: [(data: Data, centralID: UUID)] { lock.withLock { challenges } }
     var sentPairingResponses: [(data: Data, centralID: UUID)] { lock.withLock { pairs } }
     var connectedCentralIDs: [UUID] { [] }
     func startAdvertising() {}
     func stopAdvertising() {}
     func averageRSSI(for centralID: UUID) -> Int? { -60 }
-    func sendChallenge(_ data: Data, to centralID: UUID) -> Bool { lock.withLock { challenges.append((data, centralID)) }; return sendSucceeds }
-    func sendPairingData(_ data: Data, to centralID: UUID) -> Bool { lock.withLock { pairs.append((data, centralID)) }; return sendSucceeds }
+    func sendChallenge(_ data: Data, to centralID: UUID) -> Bool {
+        lock.withLock {
+            challenges.append((data, centralID))
+            return _sendSucceeds
+        }
+    }
+    func sendPairingData(_ data: Data, to centralID: UUID) -> Bool {
+        lock.withLock {
+            pairs.append((data, centralID))
+            return _sendSucceeds
+        }
+    }
     func sendSessionKey(_ data: Data, to centralID: UUID) -> Bool { true }
     func simulateConnect(_ id: UUID) { delegate?.bleServer(self, centralDidConnect: id) }
     func simulateDisconnect(_ id: UUID) { delegate?.bleServer(self, centralDidDisconnect: id) }
